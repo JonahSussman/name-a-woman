@@ -1,3 +1,4 @@
+mod config;
 mod db;
 mod game;
 mod handlers;
@@ -16,6 +17,7 @@ use tracing_subscriber::EnvFilter;
 
 pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
+    pub config: config::Config,
 }
 
 #[tokio::main]
@@ -24,9 +26,17 @@ async fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
+    let config = config::Config::from_env();
+    tracing::info!(
+        max_fallback_lookups = config.max_fallback_lookups,
+        inactivity_timeout_secs = config.inactivity_timeout_secs,
+        "loaded config"
+    );
+
     let conn = db::init_db("data/names.db").expect("failed to initialize database");
     let state = Arc::new(AppState {
         db: Mutex::new(conn),
+        config,
     });
 
     let api = Router::new()

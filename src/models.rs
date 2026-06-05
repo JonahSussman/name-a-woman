@@ -20,6 +20,8 @@ pub struct CompletionData {
 #[derive(Debug, Serialize)]
 pub struct LeaderboardEntry {
     pub rank: i64,
+    pub game_id: String,
+    pub user_id: String,
     pub total_time_ms: i64,
     pub accepted_count: i64,
     pub category: String,

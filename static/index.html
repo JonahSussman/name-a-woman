@@ -1,15 +1,304 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Name a Woman</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Name a Woman</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="app.js" defer></script>
+  <script src="https://unpkg.com/petite-vue" defer init></script>
 </head>
 <body>
-    <div id="app">
-        <h1>Name a Woman</h1>
-        <p>Coming soon.</p>
+
+<div id="app" v-scope="Game()" @vue:mounted="mounted()" v-cloak>
+
+  <div class="screen">
+
+    <!-- Title — always visible -->
+    <h1 class="title" :class="{ 'title-small': state === 'playing' }">
+      Name
+      <span :class="{ toggle: titleClickable }" @click="cycleCount">{{ targetCount }}</span>
+      <span :class="{ toggle: titleClickable }" @click="cycleCategory" :style="{ color: categoryColor }">{{ category }}</span>
+    </h1>
+
+    <!-- User ID badge -->
+    <div class="user-badge" v-if="state === 'setup'">user id: {{ shortId(userId) }}</div>
+
+    <!-- Setup -->
+    <div v-if="state === 'setup'">
+      <div class="input-area">
+        <input
+          type="text"
+          v-model="currentGuess"
+          @input="onInput"
+          placeholder="Type a name to start..."
+          autocomplete="off"
+          autofocus
+        >
+      </div>
+      <button class="start-btn" @click="loadLeaderboard">Leaderboard</button>
     </div>
+
+    <!-- Playing -->
+    <div v-if="state === 'playing'">
+      <div class="timers">
+        <div class="elapsed">{{ formatTime(elapsed) }}</div>
+        <div class="inactivity" :class="{ urgent: inactivityRemaining < 30000 }">
+          {{ formatCountdown(inactivityRemaining) }}
+        </div>
+      </div>
+
+      <div class="progress">{{ acceptedCount }} / {{ targetCount }}</div>
+
+      <div class="input-area">
+        <input
+          type="text"
+          v-model="currentGuess"
+          @keydown.enter="submitGuess"
+          :class="{ shake: inputError, 'input-error': inputError, 'input-warn': inputWarn, 'input-pending': guessPending }"
+          :disabled="guessPending"
+          placeholder="Type a name..."
+          autocomplete="off"
+          autofocus
+        >
+        <div v-if="feedbackMsg" class="feedback" :class="feedbackClass">{{ feedbackMsg }}</div>
+      </div>
+
+      <ul class="guess-list" v-if="acceptedGuesses.length">
+        <li v-for="g in acceptedGuesses" :key="g.order" class="guess-item">
+          <span class="guess-order">{{ g.order }}.</span>
+          <a :href="g.url" target="_blank" rel="noopener">{{ g.displayName }}</a>
+          <span class="guess-typed">{{ g.typed }}<span v-if="g.corrected" class="corrected-mark">*</span><span v-if="g.usedFallback" class="fallback-mark">&dagger;</span></span>
+          <span class="guess-time">{{ formatTime(g.timeMs) }}</span>
+        </li>
+      </ul>
+
+      <div class="footnotes" v-if="hasCorrections || hasFallbacks">
+        <div v-if="hasCorrections" class="footnote"><span class="corrected-mark">*</span> Spelling corrected</div>
+        <div v-if="hasFallbacks" class="footnote"><span class="fallback-mark">&dagger;</span> Looked up on Wikidata ({{ fallbacksMax - fallbacksUsed }}/{{ fallbacksMax }} remaining)</div>
+      </div>
+    </div>
+
+    <!-- Completed -->
+    <div v-if="state === 'completed'">
+      <div class="stats" v-if="completion">
+        <div class="stat">
+          <span class="stat-label">Time</span>
+          <span class="stat-value">{{ formatTime(completion.total_time_ms) }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Rank</span>
+          <span class="stat-value">#{{ completion.rank }} / {{ completion.total_players }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Percentile</span>
+          <span class="stat-value">Top {{ (100 - completion.percentile).toFixed(1) }}%</span>
+        </div>
+      </div>
+
+      <div class="chart-container">
+        <canvas id="pace-chart"></canvas>
+      </div>
+
+      <div class="actions">
+        <button class="start-btn" @click="shareResults">Share</button>
+        <button class="start-btn" @click="resetGame">Play Again</button>
+      </div>
+      <div v-if="shareMsg" class="share-msg">{{ shareMsg }}</div>
+
+      <div v-if="leaderboard && leaderboard.your_neighborhood" class="leaderboard-section">
+        <div class="lb-block">
+          <h3>Your Neighborhood</h3>
+          <table class="lb-table">
+            <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
+            <tbody>
+              <tr v-for="e in leaderboard.your_neighborhood.above" :key="'a'+e.rank">
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+              </tr>
+              <tr class="you-row">
+                <td>{{ leaderboard.your_neighborhood.you.rank }}</td>
+                <td><a :href="gameUrl(leaderboard.your_neighborhood.you.game_id)">{{ shortId(leaderboard.your_neighborhood.you.user_id) }}</a></td>
+                <td>{{ formatTime(leaderboard.your_neighborhood.you.total_time_ms) }}</td>
+              </tr>
+              <tr v-for="e in leaderboard.your_neighborhood.below" :key="'b'+e.rank">
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div v-if="leaderboard && leaderboard.full_leaderboard" class="leaderboard-section">
+        <div class="lb-block">
+          <h3>Leaderboard</h3>
+          <table class="lb-table">
+            <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
+            <tbody>
+              <tr v-for="e in leaderboard.full_leaderboard.entries" :key="'f'+e.rank" :class="{ 'you-row': e.is_you }">
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="pagination" v-if="leaderboard.full_leaderboard.total_pages > 1">
+            <button @click="loadLeaderboardPage(leaderboard.full_leaderboard.page - 1)" :disabled="leaderboard.full_leaderboard.page <= 1">&laquo;</button>
+            <template v-for="p in paginationPages">
+              <span v-if="p === null" class="page-ellipsis">...</span>
+              <button v-else @click="loadLeaderboardPage(p)" :class="{ 'page-active': p === leaderboard.full_leaderboard.page }">{{ p }}</button>
+            </template>
+            <button @click="loadLeaderboardPage(leaderboard.full_leaderboard.page + 1)" :disabled="leaderboard.full_leaderboard.page >= leaderboard.full_leaderboard.total_pages">&raquo;</button>
+            <input class="page-input" type="number" v-model="leaderboardGoTo" @keydown.enter="goToPage" placeholder="#" min="1">
+          </div>
+        </div>
+      </div>
+
+      <div class="guess-list-section" v-if="acceptedGuesses.length">
+        <h3>Your Guesses</h3>
+        <ul class="guess-list">
+          <li v-for="g in [...acceptedGuesses].reverse()" :key="g.order" class="guess-item">
+            <span class="guess-order">{{ g.order }}.</span>
+            <a :href="g.url" target="_blank" rel="noopener">{{ g.displayName }}</a>
+            <span class="guess-time">{{ formatTime(g.timeMs) }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Timed Out -->
+    <div v-if="state === 'timed_out'">
+      <p class="timeout-detail">You named {{ acceptedCount }} of {{ targetCount }} {{ category }}.</p>
+
+      <div class="actions">
+        <button class="start-btn" @click="resetGame">Play Again</button>
+      </div>
+
+      <div class="guess-list-section" v-if="acceptedGuesses.length">
+        <h3>Your Guesses</h3>
+        <ul class="guess-list">
+          <li v-for="g in [...acceptedGuesses].reverse()" :key="g.order" class="guess-item">
+            <span class="guess-order">{{ g.order }}.</span>
+            <a :href="g.url" target="_blank" rel="noopener">{{ g.displayName }}</a>
+            <span class="guess-time">{{ formatTime(g.timeMs) }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Shared Results -->
+    <div v-if="state === 'results'">
+      <div class="stats" v-if="completion">
+        <div class="stat">
+          <span class="stat-label">Time</span>
+          <span class="stat-value">{{ formatTime(completion.total_time_ms) }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Rank</span>
+          <span class="stat-value">#{{ completion.rank }} / {{ completion.total_players }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Percentile</span>
+          <span class="stat-value">Top {{ (100 - completion.percentile).toFixed(1) }}%</span>
+        </div>
+      </div>
+
+      <div class="chart-container">
+        <canvas id="pace-chart"></canvas>
+      </div>
+
+      <div class="actions">
+        <button class="start-btn" @click="resetGame">Play</button>
+      </div>
+
+      <div v-if="leaderboard && leaderboard.your_neighborhood" class="leaderboard-section">
+        <div class="lb-block">
+          <h3>Neighborhood</h3>
+          <table class="lb-table">
+            <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
+            <tbody>
+              <tr v-for="e in leaderboard.your_neighborhood.above" :key="'ra'+e.rank">
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+              </tr>
+              <tr class="you-row">
+                <td>{{ leaderboard.your_neighborhood.you.rank }}</td>
+                <td><a :href="gameUrl(leaderboard.your_neighborhood.you.game_id)">{{ shortId(leaderboard.your_neighborhood.you.user_id) }}</a></td>
+                <td>{{ formatTime(leaderboard.your_neighborhood.you.total_time_ms) }}</td>
+              </tr>
+              <tr v-for="e in leaderboard.your_neighborhood.below" :key="'rb'+e.rank">
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div v-if="leaderboard && leaderboard.full_leaderboard" class="leaderboard-section">
+        <div class="lb-block">
+          <h3>Leaderboard</h3>
+          <table class="lb-table">
+            <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
+            <tbody>
+              <tr v-for="e in leaderboard.full_leaderboard.entries" :key="'rf'+e.rank" :class="{ 'you-row': e.is_you }">
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="pagination" v-if="leaderboard.full_leaderboard.total_pages > 1">
+            <button @click="loadLeaderboardPage(leaderboard.full_leaderboard.page - 1)" :disabled="leaderboard.full_leaderboard.page <= 1">&laquo;</button>
+            <template v-for="p in paginationPages">
+              <span v-if="p === null" class="page-ellipsis">...</span>
+              <button v-else @click="loadLeaderboardPage(p)" :class="{ 'page-active': p === leaderboard.full_leaderboard.page }">{{ p }}</button>
+            </template>
+            <button @click="loadLeaderboardPage(leaderboard.full_leaderboard.page + 1)" :disabled="leaderboard.full_leaderboard.page >= leaderboard.full_leaderboard.total_pages">&raquo;</button>
+            <input class="page-input" type="number" v-model="leaderboardGoTo" @keydown.enter="goToPage" placeholder="#" min="1">
+          </div>
+        </div>
+      </div>
+
+      <div class="guess-list-section" v-if="gameStats && gameStats.guesses.length">
+        <h3>Guesses</h3>
+        <ul class="guess-list">
+          <li v-for="g in gameStats.guesses" :key="g.order" class="guess-item">
+            <span class="guess-order">{{ g.order }}.</span>
+            <a :href="g.wikipedia_url || g.wikidata_url" target="_blank" rel="noopener">{{ g.display_name }}</a>
+            <span class="guess-time">{{ formatTime(g.guess_time_ms) }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Leaderboard -->
+    <div v-if="state === 'leaderboard'">
+      <div v-if="leaderboard && leaderboard.full_leaderboard && leaderboard.full_leaderboard.entries.length" class="leaderboard-section">
+        <div class="lb-block">
+          <table class="lb-table">
+            <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
+            <tbody>
+              <tr v-for="e in leaderboard.full_leaderboard.entries" :key="'lf'+e.rank" :class="{ 'you-row': e.is_you }">
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="pagination" v-if="leaderboard.full_leaderboard.total_pages > 1">
+            <button @click="loadLeaderboardPage(leaderboard.full_leaderboard.page - 1)" :disabled="leaderboard.full_leaderboard.page <= 1">&laquo;</button>
+            <template v-for="p in paginationPages">
+              <span v-if="p === null" class="page-ellipsis">...</span>
+              <button v-else @click="loadLeaderboardPage(p)" :class="{ 'page-active': p === leaderboard.full_leaderboard.page }">{{ p }}</button>
+            </template>
+            <button @click="loadLeaderboardPage(leaderboard.full_leaderboard.page + 1)" :disabled="leaderboard.full_leaderboard.page >= leaderboard.full_leaderboard.total_pages">&raquo;</button>
+            <input class="page-input" type="number" v-model="leaderboardGoTo" @keydown.enter="goToPage" placeholder="#" min="1">
+          </div>
+        </div>
+      </div>
+      <div v-else class="empty-lb">No completions yet for this category.</div>
+
+      <div class="actions" style="margin-top: 2rem;">
+        <button class="start-btn" @click="resetGame">Back</button>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
 </body>
 </html>

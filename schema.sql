@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS name_variants (
 CREATE INDEX IF NOT EXISTS idx_name_variants_name ON name_variants(name_normalized);
 CREATE INDEX IF NOT EXISTS idx_name_variants_wikidata ON name_variants(wikidata_id);
 
+CREATE VIRTUAL TABLE IF NOT EXISTS name_fts USING fts5(
+    wikidata_id UNINDEXED,
+    name_normalized,
+    tokenize='trigram'
+);
+
 CREATE TABLE IF NOT EXISTS games (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

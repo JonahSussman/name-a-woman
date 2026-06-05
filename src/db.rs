@@ -7,7 +7,36 @@ pub fn init_db(path: &str) -> Result<Connection> {
     let conn = Connection::open(path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     conn.execute_batch(include_str!("../schema.sql"))?;
+    backfill_fts(&conn)?;
     Ok(conn)
+}
+
+fn backfill_fts(conn: &Connection) -> Result<()> {
+    let fts_count: i64 = conn.query_row("SELECT COUNT(*) FROM name_fts", [], |row| row.get(0))?;
+    if fts_count > 0 {
+        return Ok(());
+    }
+    let variant_count: i64 = conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
+    if variant_count == 0 {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "INSERT INTO name_fts (wikidata_id, name_normalized)
+         SELECT wikidata_id, name_normalized FROM name_variants"
+    )?;
+    conn.execute_batch(
+        "INSERT INTO name_fts (wikidata_id, name_normalized)
+         SELECT wikidata_id, REPLACE(name_normalized, ' ', '')
+         FROM name_variants
+         WHERE name_normalized LIKE '% %'"
+    )?;
+    conn.execute_batch(
+        "INSERT INTO name_variants (wikidata_id, name_normalized)
+         SELECT wikidata_id, REPLACE(name_normalized, ' ', '')
+         FROM name_variants
+         WHERE name_normalized LIKE '% %'"
+    )?;
+    Ok(())
 }
 
 pub fn insert_person(conn: &Connection, person: &Person) -> Result<()> {
@@ -27,10 +56,30 @@ pub fn insert_person(conn: &Connection, person: &Person) -> Result<()> {
 
 pub fn insert_name_variant(conn: &Connection, wikidata_id: &str, name: &str) -> Result<()> {
     let normalized = normalize_name(name);
-    conn.execute(
-        "INSERT INTO name_variants (wikidata_id, name_normalized) VALUES (?1, ?2)",
+    insert_variant_if_new(conn, wikidata_id, &normalized)?;
+    let compact = normalized.replace(' ', "");
+    if compact != normalized {
+        insert_variant_if_new(conn, wikidata_id, &compact)?;
+    }
+    Ok(())
+}
+
+fn insert_variant_if_new(conn: &Connection, wikidata_id: &str, normalized: &str) -> Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM name_variants WHERE wikidata_id = ?1 AND name_normalized = ?2)",
         params![wikidata_id, normalized],
+        |row| row.get(0),
     )?;
+    if !exists {
+        conn.execute(
+            "INSERT INTO name_variants (wikidata_id, name_normalized) VALUES (?1, ?2)",
+            params![wikidata_id, normalized],
+        )?;
+        conn.execute(
+            "INSERT INTO name_fts (wikidata_id, name_normalized) VALUES (?1, ?2)",
+            params![wikidata_id, normalized],
+        )?;
+    }
     Ok(())
 }
 
@@ -56,21 +105,77 @@ pub fn lookup_exact(conn: &Connection, name: &str) -> Result<Vec<Person>> {
 
 pub fn lookup_fuzzy(conn: &Connection, name: &str, max_distance: usize) -> Result<Vec<(Person, String)>> {
     let normalized = normalize_name(name);
-    let prefix = if normalized.len() >= 3 {
-        &normalized[..3]
-    } else {
-        &normalized
-    };
+    let compact = normalized.replace(' ', "");
+
+    if normalized.len() < 3 {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    fts_search(conn, &normalized, &mut candidates, &mut seen)?;
+    if compact != normalized {
+        fts_search(conn, &compact, &mut candidates, &mut seen)?;
+    }
+    for word in normalized.split_whitespace() {
+        if word.len() >= 4 {
+            fts_search(conn, word, &mut candidates, &mut seen)?;
+        }
+    }
+
+    let window = 5.min(normalized.len());
+    if candidates.is_empty() && normalized.len() > window {
+        for start in 0..=normalized.len() - window {
+            fts_search(conn, &normalized[start..start + window], &mut candidates, &mut seen)?;
+        }
+    }
+    if candidates.is_empty() && compact != normalized && compact.len() > window {
+        for start in 0..=compact.len() - window {
+            fts_search(conn, &compact[start..start + window], &mut candidates, &mut seen)?;
+        }
+    }
+
+    let mut results: Vec<(Person, String)> = candidates
+        .into_iter()
+        .filter(|(_, variant)| {
+            let dist = strsim::levenshtein(&normalized, variant);
+            let dist_compact = strsim::levenshtein(&compact, &variant.replace(' ', ""));
+            dist.min(dist_compact) <= max_distance
+        })
+        .collect();
+
+    results.sort_by_key(|(_, variant)| {
+        let dist = strsim::levenshtein(&normalized, variant);
+        let dist_compact = strsim::levenshtein(&compact, &variant.replace(' ', ""));
+        dist.min(dist_compact)
+    });
+
+    Ok(results)
+}
+
+fn fts_search(
+    conn: &Connection,
+    query: &str,
+    results: &mut Vec<(Person, String)>,
+    seen: &mut std::collections::HashSet<(String, String)>,
+) -> Result<()> {
+    if query.len() < 3 {
+        return Ok(());
+    }
+
+    let escaped = query.replace('"', "\"\"");
+    let fts_query = format!("\"{escaped}\"");
 
     let mut stmt = conn.prepare(
-        "SELECT p.wikidata_id, p.display_name, p.gender, p.wikipedia_url, p.wikidata_url, nv.name_normalized
-         FROM name_variants nv
-         JOIN people p ON nv.wikidata_id = p.wikidata_id
-         WHERE nv.name_normalized LIKE ?1
-         LIMIT 500",
+        "SELECT p.wikidata_id, p.display_name, p.gender, p.wikipedia_url, p.wikidata_url, nf.name_normalized
+         FROM name_fts nf
+         JOIN people p ON nf.wikidata_id = p.wikidata_id
+         WHERE name_fts MATCH ?1
+         LIMIT 50",
     )?;
-    let like_pattern = format!("{prefix}%");
-    let rows = stmt.query_map(params![like_pattern], |row| {
+
+    let rows = stmt.query_map(params![fts_query], |row| {
         Ok((
             Person {
                 wikidata_id: row.get(0)?,
@@ -83,15 +188,24 @@ pub fn lookup_fuzzy(conn: &Connection, name: &str, max_distance: usize) -> Resul
         ))
     })?;
 
-    let mut results = Vec::new();
     for row in rows {
-        let (person, variant_name) = row?;
-        let dist = strsim::levenshtein(&normalized, &variant_name);
-        if dist <= max_distance {
-            results.push((person, variant_name));
+        let (person, variant) = row?;
+        if seen.insert((person.wikidata_id.clone(), variant.clone())) {
+            results.push((person, variant));
         }
     }
-    Ok(results)
+
+    Ok(())
+}
+
+pub fn has_active_game(conn: &Connection, user_id: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM games WHERE user_id = ?1 AND completed_at IS NULL
+         AND started_at > datetime('now', '-10 minutes')",
+        params![user_id],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
 }
 
 pub fn create_game(conn: &Connection, game_id: &str, user_id: &str, ip_hash: &str, category: &str, target_count: i64) -> Result<()> {
@@ -181,6 +295,15 @@ pub fn increment_fallback_lookups(conn: &Connection, game_id: &str) -> Result<i6
     Ok(count)
 }
 
+pub fn abandon_game(conn: &Connection, game_id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE games SET completed_at = datetime('now')
+         WHERE id = ?1 AND completed_at IS NULL",
+        params![game_id],
+    )?;
+    Ok(())
+}
+
 pub fn complete_game(conn: &Connection, game_id: &str) -> Result<i64> {
     conn.execute(
         "UPDATE games SET completed_at = datetime('now'),
@@ -205,7 +328,7 @@ pub fn get_rank(conn: &Connection, game_id: &str, category: &str, target_count: 
 
     let rank: i64 = conn.query_row(
         "SELECT COUNT(*) + 1 FROM games
-         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL
+         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL
                AND total_time_ms < ?3 AND id != ?4",
         params![category, target_count, total_time_ms, game_id],
         |row| row.get(0),
@@ -213,7 +336,7 @@ pub fn get_rank(conn: &Connection, game_id: &str, category: &str, target_count: 
 
     let total_players: i64 = conn.query_row(
         "SELECT COUNT(*) FROM games
-         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL",
+         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL",
         params![category, target_count],
         |row| row.get(0),
     )?;
@@ -234,21 +357,23 @@ pub fn get_rank(conn: &Connection, game_id: &str, category: &str, target_count: 
 
 pub fn get_leaderboard_top(conn: &Connection, category: &str, target_count: i64, limit: i64) -> Result<Vec<LeaderboardEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, total_time_ms, accepted_count, category
+        "SELECT id, user_id, total_time_ms, accepted_count, category
          FROM games
-         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL
+         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL
          ORDER BY total_time_ms ASC
          LIMIT ?3",
     )?;
     let rows = stmt.query_map(params![category, target_count, limit], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
     })?;
 
     let mut entries = Vec::new();
     for (i, row) in rows.enumerate() {
-        let (_, time, count, cat) = row?;
+        let (gid, uid, time, count, cat) = row?;
         entries.push(LeaderboardEntry {
             rank: (i + 1) as i64,
+            game_id: gid,
+            user_id: uid,
             total_time_ms: time,
             accepted_count: count,
             category: cat,
@@ -260,26 +385,28 @@ pub fn get_leaderboard_top(conn: &Connection, category: &str, target_count: i64,
 
 pub fn get_leaderboard_bottom(conn: &Connection, category: &str, target_count: i64, limit: i64) -> Result<Vec<LeaderboardEntry>> {
     let total: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM games WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL",
+        "SELECT COUNT(*) FROM games WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL",
         params![category, target_count],
         |row| row.get(0),
     )?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, total_time_ms, accepted_count, category
+        "SELECT id, user_id, total_time_ms, accepted_count, category
          FROM games
-         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL
+         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL
          ORDER BY total_time_ms DESC
          LIMIT ?3",
     )?;
     let rows: Vec<_> = stmt.query_map(params![category, target_count, limit], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
     })?.collect::<Result<Vec<_>>>()?;
 
     let mut entries = Vec::new();
-    for (i, (_, time, count, cat)) in rows.iter().rev().enumerate() {
+    for (i, (gid, uid, time, count, cat)) in rows.iter().rev().enumerate() {
         entries.push(LeaderboardEntry {
             rank: total - (rows.len() as i64) + (i as i64) + 1,
+            game_id: gid.clone(),
+            user_id: uid.clone(),
             total_time_ms: *time,
             accepted_count: *count,
             category: cat.clone(),
@@ -300,21 +427,23 @@ pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target
     let my_rank = rank_data.rank;
 
     let mut above_stmt = conn.prepare(
-        "SELECT id, total_time_ms, accepted_count, category
+        "SELECT id, user_id, total_time_ms, accepted_count, category
          FROM games
-         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL
+         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL
                AND (total_time_ms < ?3 OR (total_time_ms = ?3 AND id < ?4))
          ORDER BY total_time_ms DESC
          LIMIT ?5",
     )?;
     let above_rows: Vec<_> = above_stmt.query_map(params![category, target_count, total_time_ms, game_id, range], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
     })?.collect::<Result<Vec<_>>>()?;
 
     let mut above = Vec::new();
-    for (i, (_, time, count, cat)) in above_rows.iter().rev().enumerate() {
+    for (i, (gid, uid, time, count, cat)) in above_rows.iter().rev().enumerate() {
         above.push(LeaderboardEntry {
             rank: my_rank - (above_rows.len() as i64) + (i as i64),
+            game_id: gid.clone(),
+            user_id: uid.clone(),
             total_time_ms: *time,
             accepted_count: *count,
             category: cat.clone(),
@@ -324,6 +453,8 @@ pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target
 
     let you = LeaderboardEntry {
         rank: my_rank,
+        game_id: game.id.clone(),
+        user_id: game.user_id.clone(),
         total_time_ms,
         accepted_count: game.accepted_count,
         category: game.category.clone(),
@@ -331,20 +462,22 @@ pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target
     };
 
     let mut below_stmt = conn.prepare(
-        "SELECT id, total_time_ms, accepted_count, category
+        "SELECT id, user_id, total_time_ms, accepted_count, category
          FROM games
-         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL
+         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL
                AND (total_time_ms > ?3 OR (total_time_ms = ?3 AND id > ?4))
          ORDER BY total_time_ms ASC
          LIMIT ?5",
     )?;
     let below: Vec<_> = below_stmt.query_map(params![category, target_count, total_time_ms, game_id, range], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
     })?.collect::<Result<Vec<_>>>()?;
 
-    let below = below.into_iter().enumerate().map(|(i, (_, time, count, cat))| {
+    let below = below.into_iter().enumerate().map(|(i, (gid, uid, time, count, cat))| {
         LeaderboardEntry {
             rank: my_rank + (i as i64) + 1,
+            game_id: gid,
+            user_id: uid,
             total_time_ms: time,
             accepted_count: count,
             category: cat,
@@ -357,7 +490,7 @@ pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target
 
 pub fn get_paginated_leaderboard(conn: &Connection, category: &str, target_count: i64, page: i64, per_page: i64) -> Result<PaginatedLeaderboard> {
     let total_entries: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM games WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL",
+        "SELECT COUNT(*) FROM games WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL",
         params![category, target_count],
         |row| row.get(0),
     )?;
@@ -365,19 +498,21 @@ pub fn get_paginated_leaderboard(conn: &Connection, category: &str, target_count
     let offset = (page - 1) * per_page;
 
     let mut stmt = conn.prepare(
-        "SELECT id, total_time_ms, accepted_count, category
+        "SELECT id, user_id, total_time_ms, accepted_count, category
          FROM games
-         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL
+         WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL
          ORDER BY total_time_ms ASC
          LIMIT ?3 OFFSET ?4",
     )?;
     let entries: Vec<_> = stmt.query_map(params![category, target_count, per_page, offset], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
     })?.collect::<Result<Vec<_>>>()?;
 
-    let entries = entries.into_iter().enumerate().map(|(i, (_, time, count, cat))| {
+    let entries = entries.into_iter().enumerate().map(|(i, (gid, uid, time, count, cat))| {
         LeaderboardEntry {
             rank: offset + (i as i64) + 1,
+            game_id: gid,
+            user_id: uid,
             total_time_ms: time,
             accepted_count: count,
             category: cat,
@@ -395,7 +530,8 @@ pub fn get_paginated_leaderboard(conn: &Connection, category: &str, target_count
 
 pub fn get_game_guesses(conn: &Connection, game_id: &str) -> Result<Vec<GuessSummary>> {
     let mut stmt = conn.prepare(
-        "SELECT g.guess_order, p.display_name, g.guess_time_ms, p.wikipedia_url, p.wikidata_url
+        "SELECT ROW_NUMBER() OVER (ORDER BY g.guess_order ASC),
+                p.display_name, g.guess_time_ms, p.wikipedia_url, p.wikidata_url
          FROM guesses g
          JOIN people p ON g.person_id = p.wikidata_id
          WHERE g.game_id = ?1 AND g.accepted = 1
