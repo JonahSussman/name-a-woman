@@ -5,6 +5,7 @@ const CATEGORIES = ['women', 'men', 'people'];
 const COUNTS = [10, 100, 1000];
 const CATEGORY_COLORS = { women: '#e91e8a', men: '#1e90ff', people: '#333' };
 const INACTIVITY_TIMEOUT = 300_000;
+const BASE_PATH = location.pathname.replace(/\/$/, '');
 
 let _chart = null;
 
@@ -120,7 +121,7 @@ function Game() {
       this.state = 'results';
       this.gameId = gameId;
       try {
-        const statsRes = await fetch(`/api/stats/game/${gameId}`);
+        const statsRes = await fetch(`${BASE_PATH}/api/stats/game/${gameId}`);
         if (!statsRes.ok) {
           this.state = 'setup';
           return;
@@ -130,7 +131,7 @@ function Game() {
         this.targetCount = this.gameStats.game.target_count;
         this.completion = this.gameStats.ranking;
 
-        const lbRes = await fetch(`/api/leaderboard?category=${this.category}&count=${this.targetCount}&game_id=${gameId}&page=1`);
+        const lbRes = await fetch(`${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&game_id=${gameId}&page=1`);
         if (lbRes.ok) {
           this.leaderboard = await lbRes.json();
         }
@@ -145,7 +146,7 @@ function Game() {
       this.leaderboardPage = 1;
       this.leaderboardGoTo = '';
       try {
-        const res = await fetch(`/api/leaderboard?category=${this.category}&count=${this.targetCount}&page=1`);
+        const res = await fetch(`${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&page=1`);
         if (res.ok) {
           this.leaderboard = await res.json();
         }
@@ -162,7 +163,7 @@ function Game() {
       this.leaderboardGoTo = '';
       const gameIdParam = this.gameId ? `&game_id=${this.gameId}` : '';
       try {
-        const res = await fetch(`/api/leaderboard?category=${this.category}&count=${this.targetCount}&page=${page}${gameIdParam}`);
+        const res = await fetch(`${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&page=${page}${gameIdParam}`);
         if (res.ok) {
           this.leaderboard = await res.json();
         }
@@ -208,7 +209,7 @@ function Game() {
       this.startTimers();
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${location.host}/api/game/ws`;
+      const wsUrl = `${proto}//${location.host}${BASE_PATH}/api/game/ws`;
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
@@ -328,8 +329,8 @@ function Game() {
       if (!this.gameId) return;
       try {
         const [lbRes, statsRes] = await Promise.all([
-          fetch(`/api/leaderboard?category=${this.category}&count=${this.targetCount}&game_id=${this.gameId}&page=1`),
-          fetch(`/api/stats/game/${this.gameId}`),
+          fetch(`${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&game_id=${this.gameId}&page=1`),
+          fetch(`${BASE_PATH}/api/stats/game/${this.gameId}`),
         ]);
         if (lbRes.ok) this.leaderboard = await lbRes.json();
         if (statsRes.ok) this.gameStats = await statsRes.json();
