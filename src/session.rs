@@ -26,7 +26,3 @@ pub fn hash_ip(headers: &HeaderMap) -> String {
     let result = hasher.finalize();
     hex::encode(&result[..8])
 }
-
-pub fn session_cookie(session_id: &str) -> String {
-    format!("naw_session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000")
-}

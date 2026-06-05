@@ -14,7 +14,7 @@ pub async fn health() -> StatusCode {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct LeaderboardQuery {
-    pub category: Option<String>,
+    pub category: Option<Category>,
     pub count: Option<i64>,
     pub game_id: Option<String>,
     pub page: Option<i64>,
@@ -24,20 +24,21 @@ pub async fn leaderboard(
     State(state): State<Arc<AppState>>,
     Query(params): Query<LeaderboardQuery>,
 ) -> (StatusCode, Json<LeaderboardResponse>) {
-    let category = params.category.as_deref().unwrap_or("women");
+    let category = params.category.unwrap_or(Category::Women);
+    let cat = category.as_str();
     let count = params.count.unwrap_or(100);
 
     let db = state.db.lock().await;
 
-    let top_10 = db::get_leaderboard_top(&db, category, count, 10).unwrap_or_default();
-    let bottom_10 = db::get_leaderboard_bottom(&db, category, count, 10).unwrap_or_default();
+    let top_10 = db::get_leaderboard_top(&db, cat, count, 10).unwrap_or_default();
+    let bottom_10 = db::get_leaderboard_bottom(&db, cat, count, 10).unwrap_or_default();
 
     let your_neighborhood = params.game_id.as_deref().and_then(|gid| {
-        db::get_neighborhood(&db, gid, category, count, 10).ok().flatten()
+        db::get_neighborhood(&db, gid, cat, count, 10).ok().flatten()
     });
 
     let full_leaderboard = params.page.and_then(|page| {
-        db::get_paginated_leaderboard(&db, category, count, page, 50).ok()
+        db::get_paginated_leaderboard(&db, cat, count, page, 50).ok()
     });
 
     (

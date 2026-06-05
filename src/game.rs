@@ -19,7 +19,7 @@ use crate::wikidata;
 #[serde(tag = "action")]
 enum ClientMessage {
     #[serde(rename = "start")]
-    Start { category: String, target_count: i64 },
+    Start { category: Category, target_count: i64 },
     #[serde(rename = "guess")]
     Guess { name: String },
 }
@@ -82,10 +82,6 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
 
     let (category, target_count) = match start_msg {
         ClientMessage::Start { category, target_count } => {
-            if !matches!(category.as_str(), "women" | "men" | "people") {
-                let _ = send(&mut socket, &ServerMessage::Error { message: "invalid category".into() }).await;
-                return;
-            }
             if !matches!(target_count, 10 | 100 | 1000) {
                 let _ = send(&mut socket, &ServerMessage::Error { message: "invalid target_count".into() }).await;
                 return;
@@ -105,7 +101,7 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
             let _ = send(&mut socket, &ServerMessage::Error { message: "you already have an active game".into() }).await;
             return;
         }
-        if let Err(e) = db::create_game(&db, &game_id, &user_id, &ip_hash, &category, target_count) {
+        if let Err(e) = db::create_game(&db, &game_id, &user_id, &ip_hash, category.as_str(), target_count) {
             let _ = send(&mut socket, &ServerMessage::Error { message: e.to_string() }).await;
             return;
         }
@@ -172,7 +168,7 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
 
         let (response, needs_fallback) = {
             let db = state.db.lock().await;
-            let r = process_guess(&db, &game_id, &category, target_count, &name, elapsed_ms, guess_order);
+            let r = process_guess(&db, &game_id, category, target_count, &name, elapsed_ms, guess_order);
             match r {
                 GuessResult::Response(msg) => (msg, false),
                 GuessResult::TryFallback => (ServerMessage::NotFound { fallback_exhausted: None }, true),
@@ -197,21 +193,14 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
 
                 if db::is_person_already_guessed(&db, &game_id, &person.wikidata_id).unwrap_or(false) {
                     ServerMessage::AlreadyGuessed { person }
-                } else {
-                    let gender_filter = match category.as_str() {
-                        "women" => Some("female"),
-                        "men" => Some("male"),
-                        _ => None,
-                    };
-                    if let Some(g) = gender_filter {
-                        if person.gender != g {
-                            ServerMessage::WrongCategory { person }
-                        } else {
-                            accept_guess(&db, &game_id, &category, target_count, &name, &person, None, elapsed_ms, guess_order, true)
-                        }
+                } else if let Some(g) = category.gender_filter() {
+                    if person.gender != g {
+                        ServerMessage::WrongCategory { person }
                     } else {
-                        accept_guess(&db, &game_id, &category, target_count, &name, &person, None, elapsed_ms, guess_order, true)
+                        accept_guess(&db, &game_id, category, target_count, &name, &person, None, elapsed_ms, guess_order, true)
                     }
+                } else {
+                    accept_guess(&db, &game_id, category, target_count, &name, &person, None, elapsed_ms, guess_order, true)
                 }
             } else {
                 let db = state.db.lock().await;
@@ -254,18 +243,13 @@ enum GuessResult {
 fn process_guess(
     db: &rusqlite::Connection,
     game_id: &str,
-    category: &str,
+    category: Category,
     target_count: i64,
     name: &str,
     elapsed_ms: i64,
     guess_order: i64,
 ) -> GuessResult {
-    let gender_filter = match category {
-        "women" => Some("female"),
-        "men" => Some("male"),
-        "people" => None,
-        _ => return GuessResult::Response(ServerMessage::Error { message: "invalid category".into() }),
-    };
+    let gender_filter = category.gender_filter();
 
     let matches = match db::lookup_exact(db, name) {
         Ok(m) => m,
@@ -348,7 +332,7 @@ fn find_already_guessed(
 fn accept_guess(
     db: &rusqlite::Connection,
     game_id: &str,
-    category: &str,
+    category: Category,
     target_count: i64,
     name_entered: &str,
     person: &Person,
@@ -369,7 +353,7 @@ fn accept_guess(
     let game_complete = accepted_count >= target_count;
     let completion = if game_complete {
         let _ = db::complete_game(db, game_id);
-        db::get_rank(db, game_id, category, target_count).ok()
+        db::get_rank(db, game_id, category.as_str(), target_count).ok()
     } else {
         None
     };

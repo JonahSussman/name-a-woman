@@ -1,4 +1,40 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Category {
+    #[serde(rename = "women")]
+    Women,
+    #[serde(rename = "men")]
+    Men,
+    #[serde(rename = "people")]
+    People,
+}
+
+impl Category {
+    pub fn gender_filter(self) -> Option<&'static str> {
+        match self {
+            Category::Women => Some("female"),
+            Category::Men => Some("male"),
+            Category::People => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Category::Women => "women",
+            Category::Men => "men",
+            Category::People => "people",
+        }
+    }
+}
+
+impl fmt::Display for Category {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Person {

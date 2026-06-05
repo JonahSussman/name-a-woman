@@ -39,6 +39,16 @@ fn backfill_fts(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn person_from_row(row: &rusqlite::Row) -> Result<Person> {
+    Ok(Person {
+        wikidata_id: row.get(0)?,
+        display_name: row.get(1)?,
+        gender: row.get(2)?,
+        wikipedia_url: row.get(3)?,
+        wikidata_url: row.get(4)?,
+    })
+}
+
 pub fn insert_person(conn: &Connection, person: &Person) -> Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO people (wikidata_id, display_name, gender, wikipedia_url, wikidata_url)
@@ -91,15 +101,7 @@ pub fn lookup_exact(conn: &Connection, name: &str) -> Result<Vec<Person>> {
          JOIN people p ON nv.wikidata_id = p.wikidata_id
          WHERE nv.name_normalized = ?1",
     )?;
-    let rows = stmt.query_map(params![normalized], |row| {
-        Ok(Person {
-            wikidata_id: row.get(0)?,
-            display_name: row.get(1)?,
-            gender: row.get(2)?,
-            wikipedia_url: row.get(3)?,
-            wikidata_url: row.get(4)?,
-        })
-    })?;
+    let rows = stmt.query_map(params![normalized], person_from_row)?;
     rows.collect()
 }
 
@@ -176,16 +178,7 @@ fn fts_search(
     )?;
 
     let rows = stmt.query_map(params![fts_query], |row| {
-        Ok((
-            Person {
-                wikidata_id: row.get(0)?,
-                display_name: row.get(1)?,
-                gender: row.get(2)?,
-                wikipedia_url: row.get(3)?,
-                wikidata_url: row.get(4)?,
-            },
-            row.get::<_, String>(5)?,
-        ))
+        Ok((person_from_row(row)?, row.get::<_, String>(5)?))
     })?;
 
     for row in rows {
@@ -355,6 +348,22 @@ pub fn get_rank(conn: &Connection, game_id: &str, category: &str, target_count: 
     })
 }
 
+fn leaderboard_row(row: &rusqlite::Row) -> Result<(String, String, i64, i64, String)> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+}
+
+fn to_leaderboard_entry(rank: i64, t: (String, String, i64, i64, String), is_you: bool) -> LeaderboardEntry {
+    LeaderboardEntry {
+        rank,
+        game_id: t.0,
+        user_id: t.1,
+        total_time_ms: t.2,
+        accepted_count: t.3,
+        category: t.4,
+        is_you,
+    }
+}
+
 pub fn get_leaderboard_top(conn: &Connection, category: &str, target_count: i64, limit: i64) -> Result<Vec<LeaderboardEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, total_time_ms, accepted_count, category
@@ -363,24 +372,12 @@ pub fn get_leaderboard_top(conn: &Connection, category: &str, target_count: i64,
          ORDER BY total_time_ms ASC
          LIMIT ?3",
     )?;
-    let rows = stmt.query_map(params![category, target_count, limit], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
-    })?;
+    let rows: Vec<_> = stmt.query_map(params![category, target_count, limit], leaderboard_row)?
+        .collect::<Result<Vec<_>>>()?;
 
-    let mut entries = Vec::new();
-    for (i, row) in rows.enumerate() {
-        let (gid, uid, time, count, cat) = row?;
-        entries.push(LeaderboardEntry {
-            rank: (i + 1) as i64,
-            game_id: gid,
-            user_id: uid,
-            total_time_ms: time,
-            accepted_count: count,
-            category: cat,
-            is_you: false,
-        });
-    }
-    Ok(entries)
+    Ok(rows.into_iter().enumerate()
+        .map(|(i, t)| to_leaderboard_entry((i + 1) as i64, t, false))
+        .collect())
 }
 
 pub fn get_leaderboard_bottom(conn: &Connection, category: &str, target_count: i64, limit: i64) -> Result<Vec<LeaderboardEntry>> {
@@ -397,23 +394,13 @@ pub fn get_leaderboard_bottom(conn: &Connection, category: &str, target_count: i
          ORDER BY total_time_ms DESC
          LIMIT ?3",
     )?;
-    let rows: Vec<_> = stmt.query_map(params![category, target_count, limit], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
-    })?.collect::<Result<Vec<_>>>()?;
+    let rows: Vec<_> = stmt.query_map(params![category, target_count, limit], leaderboard_row)?
+        .collect::<Result<Vec<_>>>()?;
 
-    let mut entries = Vec::new();
-    for (i, (gid, uid, time, count, cat)) in rows.iter().rev().enumerate() {
-        entries.push(LeaderboardEntry {
-            rank: total - (rows.len() as i64) + (i as i64) + 1,
-            game_id: gid.clone(),
-            user_id: uid.clone(),
-            total_time_ms: *time,
-            accepted_count: *count,
-            category: cat.clone(),
-            is_you: false,
-        });
-    }
-    Ok(entries)
+    let start_rank = total - rows.len() as i64 + 1;
+    Ok(rows.into_iter().rev().enumerate()
+        .map(|(i, t)| to_leaderboard_entry(start_rank + i as i64, t, false))
+        .collect())
 }
 
 pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target_count: i64, range: i64) -> Result<Option<Neighborhood>> {
@@ -434,22 +421,13 @@ pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target
          ORDER BY total_time_ms DESC
          LIMIT ?5",
     )?;
-    let above_rows: Vec<_> = above_stmt.query_map(params![category, target_count, total_time_ms, game_id, range], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
-    })?.collect::<Result<Vec<_>>>()?;
+    let above_rows: Vec<_> = above_stmt.query_map(params![category, target_count, total_time_ms, game_id, range], leaderboard_row)?
+        .collect::<Result<Vec<_>>>()?;
 
-    let mut above = Vec::new();
-    for (i, (gid, uid, time, count, cat)) in above_rows.iter().rev().enumerate() {
-        above.push(LeaderboardEntry {
-            rank: my_rank - (above_rows.len() as i64) + (i as i64),
-            game_id: gid.clone(),
-            user_id: uid.clone(),
-            total_time_ms: *time,
-            accepted_count: *count,
-            category: cat.clone(),
-            is_you: false,
-        });
-    }
+    let above_start = my_rank - above_rows.len() as i64;
+    let above: Vec<_> = above_rows.into_iter().rev().enumerate()
+        .map(|(i, t)| to_leaderboard_entry(above_start + i as i64, t, false))
+        .collect();
 
     let you = LeaderboardEntry {
         rank: my_rank,
@@ -469,21 +447,12 @@ pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target
          ORDER BY total_time_ms ASC
          LIMIT ?5",
     )?;
-    let below: Vec<_> = below_stmt.query_map(params![category, target_count, total_time_ms, game_id, range], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
-    })?.collect::<Result<Vec<_>>>()?;
+    let below: Vec<_> = below_stmt.query_map(params![category, target_count, total_time_ms, game_id, range], leaderboard_row)?
+        .collect::<Result<Vec<_>>>()?;
 
-    let below = below.into_iter().enumerate().map(|(i, (gid, uid, time, count, cat))| {
-        LeaderboardEntry {
-            rank: my_rank + (i as i64) + 1,
-            game_id: gid,
-            user_id: uid,
-            total_time_ms: time,
-            accepted_count: count,
-            category: cat,
-            is_you: false,
-        }
-    }).collect();
+    let below: Vec<_> = below.into_iter().enumerate()
+        .map(|(i, t)| to_leaderboard_entry(my_rank + i as i64 + 1, t, false))
+        .collect();
 
     Ok(Some(Neighborhood { above, you, below }))
 }
@@ -504,21 +473,12 @@ pub fn get_paginated_leaderboard(conn: &Connection, category: &str, target_count
          ORDER BY total_time_ms ASC
          LIMIT ?3 OFFSET ?4",
     )?;
-    let entries: Vec<_> = stmt.query_map(params![category, target_count, per_page, offset], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
-    })?.collect::<Result<Vec<_>>>()?;
+    let entries: Vec<_> = stmt.query_map(params![category, target_count, per_page, offset], leaderboard_row)?
+        .collect::<Result<Vec<_>>>()?;
 
-    let entries = entries.into_iter().enumerate().map(|(i, (gid, uid, time, count, cat))| {
-        LeaderboardEntry {
-            rank: offset + (i as i64) + 1,
-            game_id: gid,
-            user_id: uid,
-            total_time_ms: time,
-            accepted_count: count,
-            category: cat,
-            is_you: false,
-        }
-    }).collect();
+    let entries: Vec<_> = entries.into_iter().enumerate()
+        .map(|(i, t)| to_leaderboard_entry(offset + i as i64 + 1, t, false))
+        .collect();
 
     Ok(PaginatedLeaderboard {
         entries,
