@@ -1,7 +1,13 @@
 FROM rust:1.88-bookworm AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src/bin && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
+RUN mkdir -p src/bin \
+    && echo "fn main() {}" > src/main.rs \
+    && cp src/main.rs src/bin/import_wikidata.rs \
+    && cp src/main.rs src/bin/import_dump.rs \
+    && touch src/lib.rs \
+    && cargo build --release \
+    && rm -rf src target/release/name-a-woman target/release/deps/name_a_woman-*
 COPY src/ src/
 COPY schema.sql .
 RUN cargo build --release --bin name-a-woman

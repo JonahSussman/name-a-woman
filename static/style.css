@@ -19,6 +19,8 @@ body {
   color: #333;
   background: #fafafa;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .screen {
@@ -484,6 +486,26 @@ body {
   color: #999;
   font-size: 1rem;
   margin-top: 2rem;
+}
+
+/* Footer */
+
+.site-footer {
+  margin-top: auto;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #999;
+  border-top: 1px solid #eee;
+}
+
+.site-footer a {
+  color: #1a73e8;
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  text-decoration: underline;
 }
 
 @media (max-width: 480px) {
