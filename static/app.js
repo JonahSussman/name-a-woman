@@ -1,19 +1,92 @@
 /** @typedef {'setup'|'playing'|'completed'|'timed_out'|'results'|'leaderboard'} GameState */
 /** @typedef {'women'|'men'|'people'} Category */
 
-const CATEGORIES = ['women', 'men', 'people'];
-const COUNTS = [10, 100, 1000];
-const CATEGORY_COLORS = { women: '#e91e8a', men: '#1e90ff', people: '#333' };
-const INACTIVITY_TIMEOUT = 300_000;
-const BASE_PATH = location.pathname.replace(/\/$/, '');
+/**
+ * @typedef {{
+ *   wikidata_id: string,
+ *   display_name: string,
+ *   gender: string,
+ *   wikipedia_url: string|null,
+ *   wikidata_url: string
+ * }} Person
+ *
+ * @typedef {{
+ *   total_time_ms: number,
+ *   rank: number,
+ *   total_players: number,
+ *   percentile: number
+ * }} CompletionData
+ *
+ * @typedef {{
+ *   order: number,
+ *   displayName: string,
+ *   url: string,
+ *   typed: string,
+ *   corrected: boolean,
+ *   usedFallback: boolean,
+ *   timeMs: number
+ * }} AcceptedGuess
+ *
+ * @typedef {{
+ *   type: string,
+ *   game_id?: string,
+ *   max_fallbacks?: number,
+ *   person?: Person,
+ *   used_fallback?: boolean,
+ *   corrected_from?: string,
+ *   accepted_count?: number,
+ *   game_complete?: boolean,
+ *   completion?: CompletionData,
+ *   fallback_exhausted?: boolean,
+ *   message?: string
+ * }} ServerMessage
+ *
+ * @typedef {{
+ *   game: { category: string, target_count: number, accepted_count: number, total_time_ms: number },
+ *   guesses: Array<{ order: number, display_name: string, guess_time_ms: number, wikipedia_url: string|null, wikidata_url: string }>,
+ *   ranking: CompletionData|null
+ * }} GameStats
+ *
+ * @typedef {{
+ *   rank: number, game_id: string, user_id: string, total_time_ms: number,
+ *   accepted_count: number, category: string, is_you: boolean
+ * }} LeaderboardEntry
+ *
+ * @typedef {{
+ *   entries: LeaderboardEntry[],
+ *   page: number,
+ *   total_pages: number,
+ *   total_entries: number
+ * }} PaginatedLeaderboard
+ *
+ * @typedef {{
+ *   above: LeaderboardEntry[],
+ *   you: LeaderboardEntry,
+ *   below: LeaderboardEntry[]
+ * }} Neighborhood
+ *
+ * @typedef {{
+ *   top_10: LeaderboardEntry[],
+ *   bottom_10: LeaderboardEntry[],
+ *   your_neighborhood?: Neighborhood,
+ *   full_leaderboard?: PaginatedLeaderboard
+ * }} LeaderboardResponse
+ */
 
+const CATEGORIES = /** @type {Category[]} */ (["women", "men", "people"]);
+const COUNTS = [10, 100, 1000];
+const CATEGORY_COLORS = { women: "#e91e8a", men: "#1e90ff", people: "#333" };
+const INACTIVITY_TIMEOUT = 300_000;
+const BASE_PATH = location.pathname.replace(/\/$/, "");
+
+/** @type {any} */
 let _chart = null;
 
 function getUserId() {
-  let id = localStorage.getItem('naw_user_id');
+  let id = localStorage.getItem("naw_user_id");
   if (!id) {
     id = crypto.randomUUID();
-    localStorage.setItem('naw_user_id', id);
+    localStorage.setItem("naw_user_id", id);
   }
   document.cookie = `naw_session=${id}; path=/; max-age=31536000; SameSite=Lax`;
   return id;
@@ -24,26 +97,33 @@ function Game() {
 
   return {
     /** @type {GameState} */
-    state: 'setup',
+    state: "setup",
     /** @type {Category} */
-    category: 'women',
+    category: "women",
     targetCount: 100,
-    currentGuess: '',
+    currentGuess: "",
+    /** @type {AcceptedGuess[]} */
     acceptedGuesses: [],
     acceptedCount: 0,
+    /** @type {string|null} */
     gameId: null,
     userId,
     /** @type {WebSocket|null} */
     ws: null,
 
+    /** @type {number|null} */
     startTime: null,
     elapsed: 0,
     inactivityRemaining: INACTIVITY_TIMEOUT,
+    /** @type {number|null} */
     lastCorrectTime: null,
+    /** @type {number|null} */
     timerFrame: null,
+    /** @type {number|null} */
     pausedAt: null,
     pausedElapsed: 0,
 
+    /** @type {CompletionData|null} */
     completion: null,
 
     fallbacksUsed: 0,
@@ -52,35 +132,38 @@ function Game() {
     guessPending: false,
     inputError: false,
     inputWarn: false,
-    feedbackMsg: '',
-    feedbackClass: '',
+    feedbackMsg: "",
+    feedbackClass: "",
 
-    /** @type {object|null} */
+    /** @type {LeaderboardResponse|null} */
     leaderboard: null,
-    /** @type {object|null} */
+    /** @type {GameStats|null} */
     gameStats: null,
+    /** @type {number|null} */
     leaderboardPage: null,
-    leaderboardGoTo: '',
-    shareMsg: '',
+    leaderboardGoTo: "",
+    shareMsg: "",
 
     get categoryColor() {
       return CATEGORY_COLORS[this.category];
     },
 
     get titleClickable() {
-      return this.state === 'setup' || this.state === 'leaderboard';
+      return this.state === "setup" || this.state === "leaderboard";
     },
 
+    /** @param {string} id */
     shortId(id) {
-      return id ? id.slice(0, 8) : '';
+      return id ? id.slice(0, 8) : "";
     },
 
+    /** @param {string} gameId */
     gameUrl(gameId) {
       return `${location.origin}${location.pathname}?game_id=${gameId}`;
     },
 
     get hasCorrections() {
-      return this.acceptedGuesses.some(g => g.corrected);
+      return this.acceptedGuesses.some((g) => g.corrected);
     },
 
     get hasFallbacks() {
@@ -92,13 +175,19 @@ function Game() {
       if (!fl || fl.total_pages <= 1) return [];
       const cur = fl.page;
       const total = fl.total_pages;
+      /** @type {Set<number>} */
       const pages = new Set();
       pages.add(1);
       pages.add(total);
-      for (let i = Math.max(2, cur - 1); i <= Math.min(total - 1, cur + 1); i++) {
+      for (
+        let i = Math.max(2, cur - 1);
+        i <= Math.min(total - 1, cur + 1);
+        i++
+      ) {
         pages.add(i);
       }
       const sorted = [...pages].sort((a, b) => a - b);
+      /** @type {(number|null)[]} */
       const result = [];
       for (let i = 0; i < sorted.length; i++) {
         if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
@@ -111,42 +200,47 @@ function Game() {
 
     mounted() {
       const params = new URLSearchParams(window.location.search);
-      const gameId = params.get('game_id');
+      const gameId = params.get("game_id");
       if (gameId) {
         this.loadSharedResults(gameId);
       }
     },
 
+    /** @param {string} gameId */
     async loadSharedResults(gameId) {
-      this.state = 'results';
+      this.state = "results";
       this.gameId = gameId;
       try {
         const statsRes = await fetch(`${BASE_PATH}/api/stats/game/${gameId}`);
         if (!statsRes.ok) {
-          this.state = 'setup';
+          this.state = "setup";
           return;
         }
         this.gameStats = await statsRes.json();
-        this.category = this.gameStats.game.category;
-        this.targetCount = this.gameStats.game.target_count;
-        this.completion = this.gameStats.ranking;
+        this.category = /** @type {Category} */ (this.gameStats?.game.category);
+        this.targetCount = this.gameStats?.game.target_count ?? 100;
+        this.completion = this.gameStats?.ranking ?? null;
 
-        const lbRes = await fetch(`${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&game_id=${gameId}&page=1`);
+        const lbRes = await fetch(
+          `${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&game_id=${gameId}&page=1`,
+        );
         if (lbRes.ok) {
           this.leaderboard = await lbRes.json();
         }
-        this.$nextTick(() => this.renderChart());
+        /** @type {any} */ (this).$nextTick(() => this.renderChart());
       } catch {
-        this.state = 'setup';
+        this.state = "setup";
       }
     },
 
     async loadLeaderboard() {
-      this.state = 'leaderboard';
+      this.state = "leaderboard";
       this.leaderboardPage = 1;
-      this.leaderboardGoTo = '';
+      this.leaderboardGoTo = "";
       try {
-        const res = await fetch(`${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&page=1`);
+        const res = await fetch(
+          `${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&page=1`,
+        );
         if (res.ok) {
           this.leaderboard = await res.json();
         }
@@ -155,15 +249,18 @@ function Game() {
       }
     },
 
+    /** @param {number} page */
     async loadLeaderboardPage(page) {
       if (page < 1) return;
       const fl = this.leaderboard?.full_leaderboard;
       if (fl && page > fl.total_pages) return;
       this.leaderboardPage = page;
-      this.leaderboardGoTo = '';
-      const gameIdParam = this.gameId ? `&game_id=${this.gameId}` : '';
+      this.leaderboardGoTo = "";
+      const gameIdParam = this.gameId ? `&game_id=${this.gameId}` : "";
       try {
-        const res = await fetch(`${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&page=${page}${gameIdParam}`);
+        const res = await fetch(
+          `${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&page=${page}${gameIdParam}`,
+        );
         if (res.ok) {
           this.leaderboard = await res.json();
         }
@@ -183,19 +280,19 @@ function Game() {
       if (!this.titleClickable) return;
       const i = COUNTS.indexOf(this.targetCount);
       this.targetCount = COUNTS[(i + 1) % COUNTS.length];
-      if (this.state === 'leaderboard') this.loadLeaderboard();
+      if (this.state === "leaderboard") this.loadLeaderboard();
     },
 
     cycleCategory() {
       if (!this.titleClickable) return;
       const i = CATEGORIES.indexOf(this.category);
       this.category = CATEGORIES[(i + 1) % CATEGORIES.length];
-      if (this.state === 'leaderboard') this.loadLeaderboard();
+      if (this.state === "leaderboard") this.loadLeaderboard();
     },
 
     onInput() {
-      if (this.state !== 'setup') return;
-      this.state = 'playing';
+      if (this.state !== "setup") return;
+      this.state = "playing";
       this.acceptedGuesses = [];
       this.acceptedCount = 0;
       this.startTime = Date.now();
@@ -208,86 +305,97 @@ function Game() {
       this.clearFeedback();
       this.startTimers();
 
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${proto}//${location.host}${BASE_PATH}/api/game/ws`;
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
-        this.ws.send(JSON.stringify({
-          action: 'start',
-          category: this.category,
-          target_count: this.targetCount,
-        }));
+        this.ws?.send(
+          JSON.stringify({
+            action: "start",
+            category: this.category,
+            target_count: this.targetCount,
+          }),
+        );
       };
 
       this.ws.onmessage = (e) => {
+        /** @type {ServerMessage} */
         const msg = JSON.parse(e.data);
         this.handleMessage(msg);
       };
 
       this.ws.onclose = () => {
-        if (this.state === 'playing') {
-          this.state = 'timed_out';
+        if (this.state === "playing") {
+          this.state = "timed_out";
           this.stopTimers();
         }
       };
 
       this.ws.onerror = () => {
-        this.showFeedback('Connection error', 'error');
+        this.showFeedback("Connection error", "error");
       };
     },
 
     submitGuess() {
       const name = this.currentGuess.trim();
-      if (!name || !this.ws || this.ws.readyState !== WebSocket.OPEN || this.guessPending) return;
+      if (
+        !name ||
+        !this.ws ||
+        this.ws.readyState !== WebSocket.OPEN ||
+        this.guessPending
+      )
+        return;
       this.guessPending = true;
       this.pausedAt = Date.now();
       this.pausedElapsed = this.elapsed;
-      this.showFeedback('Querying...', 'querying');
-      this.ws.send(JSON.stringify({ action: 'guess', name }));
+      this.showFeedback("Querying...", "querying");
+      this.ws.send(JSON.stringify({ action: "guess", name }));
     },
 
-    /** @param {object} msg */
+    /** @param {ServerMessage} msg */
     handleMessage(msg) {
       this.guessPending = false;
       if (this.pausedAt) {
         const pauseDuration = Date.now() - this.pausedAt;
-        this.startTime += pauseDuration;
-        this.lastCorrectTime += pauseDuration;
+        if (this.startTime) this.startTime += pauseDuration;
+        if (this.lastCorrectTime) this.lastCorrectTime += pauseDuration;
         this.pausedAt = null;
       }
       this.clearFeedback();
       setTimeout(() => {
-        const input = document.querySelector('.input-area input');
+        const input = /** @type {HTMLInputElement|null} */ (
+          document.querySelector(".input-area input")
+        );
         if (input) input.focus();
       });
 
       switch (msg.type) {
-        case 'started':
-          this.gameId = msg.game_id;
-          this.fallbacksMax = msg.max_fallbacks;
+        case "started":
+          this.gameId = msg.game_id ?? null;
+          this.fallbacksMax = msg.max_fallbacks ?? 0;
           break;
 
-        case 'accepted': {
+        case "accepted": {
           const person = msg.person;
-          const url = person.wikipedia_url || person.wikidata_url;
+          const url = person?.wikipedia_url || person?.wikidata_url || "";
           if (msg.used_fallback) this.fallbacksUsed++;
           this.acceptedGuesses.unshift({
-            order: msg.accepted_count,
-            displayName: person.display_name,
+            order: msg.accepted_count ?? 0,
+            displayName: person?.display_name ?? "",
             url,
             typed: this.currentGuess.trim(),
             corrected: !!msg.corrected_from,
             usedFallback: !!msg.used_fallback,
             timeMs: this.elapsed,
           });
-          this.acceptedCount = msg.accepted_count;
-          this.currentGuess = '';
+          this.acceptedCount = msg.accepted_count ?? 0;
+          this.currentGuess = "";
           this.lastCorrectTime = Date.now();
 
           if (msg.game_complete) {
-            this.completion = msg.completion;
-            this.state = 'completed';
+            this.completion = msg.completion ?? null;
+            this.state = "completed";
             this.stopTimers();
             this.loadCompletionData();
             this.celebrate();
@@ -295,33 +403,39 @@ function Game() {
           break;
         }
 
-        case 'already_guessed':
-          this.showFeedback(`Already guessed: ${msg.person.display_name}`, 'warn');
+        case "already_guessed":
+          this.showFeedback(
+            `Already guessed: ${msg.person?.display_name}`,
+            "warn",
+          );
           this.flashWarn();
           break;
 
-        case 'wrong_category':
-          this.showFeedback(`${msg.person.display_name} is ${msg.person.gender} in Wikidata, not ${this.category}`, 'warn');
+        case "wrong_category":
+          this.showFeedback(
+            `${msg.person?.display_name} is ${msg.person?.gender} in Wikidata, not ${this.category}`,
+            "warn",
+          );
           this.flashWarn();
           break;
 
-        case 'not_found':
+        case "not_found":
           if (msg.fallback_exhausted) {
-            this.showFeedback('Not found (no lookups remaining)', 'error');
+            this.showFeedback("Not found (no lookups remaining)", "error");
           } else {
             this.fallbacksUsed++;
-            this.showFeedback('Not found', 'error');
+            this.showFeedback("Not found", "error");
           }
           this.flashError();
           break;
 
-        case 'game_timeout':
-          this.state = 'timed_out';
+        case "game_timeout":
+          this.state = "timed_out";
           this.stopTimers();
           break;
 
-        case 'error':
-          this.showFeedback(msg.message, 'error');
+        case "error":
+          this.showFeedback(msg.message ?? "", "error");
           break;
       }
     },
@@ -330,19 +444,23 @@ function Game() {
       if (!this.gameId) return;
       try {
         const [lbRes, statsRes] = await Promise.all([
-          fetch(`${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&game_id=${this.gameId}&page=1`),
+          fetch(
+            `${BASE_PATH}/api/leaderboard?category=${this.category}&count=${this.targetCount}&game_id=${this.gameId}&page=1`,
+          ),
           fetch(`${BASE_PATH}/api/stats/game/${this.gameId}`),
         ]);
         if (lbRes.ok) this.leaderboard = await lbRes.json();
         if (statsRes.ok) this.gameStats = await statsRes.json();
-        this.$nextTick(() => this.renderChart());
+        /** @type {any} */ (this).$nextTick(() => this.renderChart());
       } catch {
         // silently fail
       }
     },
 
     renderChart() {
-      const canvas = document.getElementById('pace-chart');
+      const canvas = /** @type {HTMLCanvasElement|null} */ (
+        document.getElementById("pace-chart")
+      );
       if (!canvas) return;
 
       const guesses = this.gameStats?.guesses;
@@ -353,35 +471,40 @@ function Game() {
         _chart = null;
       }
 
-      const labels = guesses.map(g => g.order);
-      const data = guesses.map(g => g.guess_time_ms / 1000);
+      const labels = guesses.map((g) => g.order);
+      const data = guesses.map((g) => g.guess_time_ms / 1000);
 
       _chart = new Chart(canvas, {
-        type: 'line',
+        type: "line",
         data: {
           labels,
-          datasets: [{
-            label: 'Time (s)',
-            data,
-            borderColor: CATEGORY_COLORS[this.category] || '#333',
-            backgroundColor: 'transparent',
-            tension: 0.2,
-            pointRadius: guesses.length > 50 ? 0 : 3,
-            pointHoverRadius: 4,
-          }],
+          datasets: [
+            {
+              label: "Time (s)",
+              data,
+              borderColor: CATEGORY_COLORS[this.category] || "#333",
+              backgroundColor: "transparent",
+              tension: 0.2,
+              pointRadius: guesses.length > 50 ? 0 : 3,
+              pointHoverRadius: 4,
+            },
+          ],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           scales: {
-            x: { title: { display: true, text: 'Guess #' } },
-            y: { title: { display: true, text: 'Elapsed (s)' }, beginAtZero: true },
+            x: { title: { display: true, text: "Guess #" } },
+            y: {
+              title: { display: true, text: "Elapsed (s)" },
+              beginAtZero: true,
+            },
           },
           plugins: {
             legend: { display: false },
             tooltip: {
               callbacks: {
-                label: (ctx) => {
+                label: (/** @type {any} */ ctx) => {
                   const g = guesses[ctx.dataIndex];
                   return `${g.display_name} — ${this.formatTime(g.guess_time_ms)}`;
                 },
@@ -394,10 +517,22 @@ function Game() {
 
     celebrate() {
       const end = Date.now() + 2000;
-      const colors = [CATEGORY_COLORS[this.category], '#ffd700', '#ffffff'];
+      const colors = [CATEGORY_COLORS[this.category], "#ffd700", "#ffffff"];
       const frame = () => {
-        confetti({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0 }, colors });
-        confetti({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1 }, colors });
+        confetti({
+          particleCount: 3,
+          angle: 60,
+          spread: 55,
+          origin: { x: 0 },
+          colors,
+        });
+        confetti({
+          particleCount: 3,
+          angle: 120,
+          spread: 55,
+          origin: { x: 1 },
+          colors,
+        });
         if (Date.now() < end) requestAnimationFrame(frame);
       };
       frame();
@@ -408,24 +543,32 @@ function Game() {
       const url = `${location.origin}${location.pathname}?game_id=${this.gameId}`;
       const time = this.formatTime(this.completion.total_time_ms);
       const text = `I was able to name ${this.targetCount} ${this.category} in ${time}! Think you can beat my time?\n${url}`;
-      navigator.clipboard.writeText(text).then(() => {
-        this.shareMsg = 'Copied!';
-        setTimeout(() => { this.shareMsg = ''; }, 2000);
-      }).catch(() => {
-        this.shareMsg = text;
-      });
+      navigator.clipboard
+        .writeText(text)
+        .then(() => {
+          this.shareMsg = "Copied!";
+          setTimeout(() => {
+            this.shareMsg = "";
+          }, 2000);
+        })
+        .catch(() => {
+          this.shareMsg = text;
+        });
     },
 
     startTimers() {
       const tick = () => {
-        if (this.state !== 'playing') return;
+        if (this.state !== "playing") return;
         if (!this.pausedAt) {
           const now = Date.now();
           if (this.startTime) {
             this.elapsed = now - this.startTime;
           }
           if (this.lastCorrectTime) {
-            this.inactivityRemaining = Math.max(0, INACTIVITY_TIMEOUT - (now - this.lastCorrectTime));
+            this.inactivityRemaining = Math.max(
+              0,
+              INACTIVITY_TIMEOUT - (now - this.lastCorrectTime),
+            );
           }
         }
         this.timerFrame = requestAnimationFrame(tick);
@@ -446,7 +589,7 @@ function Game() {
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
       const centis = Math.floor((ms % 1000) / 10);
-      return `${minutes}:${String(seconds).padStart(2, '0')}.${String(centis).padStart(2, '0')}`;
+      return `${minutes}:${String(seconds).padStart(2, "0")}.${String(centis).padStart(2, "0")}`;
     },
 
     /** @param {number} ms */
@@ -454,17 +597,21 @@ function Game() {
       const totalSeconds = Math.ceil(ms / 1000);
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
-      return `${minutes}:${String(seconds).padStart(2, '0')}`;
+      return `${minutes}:${String(seconds).padStart(2, "0")}`;
     },
 
     flashError() {
       this.inputError = true;
-      setTimeout(() => { this.inputError = false; }, 400);
+      setTimeout(() => {
+        this.inputError = false;
+      }, 400);
     },
 
     flashWarn() {
       this.inputWarn = true;
-      setTimeout(() => { this.inputWarn = false; }, 400);
+      setTimeout(() => {
+        this.inputWarn = false;
+      }, 400);
     },
 
     /** @param {string} msg @param {string} cls */
@@ -474,8 +621,8 @@ function Game() {
     },
 
     clearFeedback() {
-      this.feedbackMsg = '';
-      this.feedbackClass = '';
+      this.feedbackMsg = "";
+      this.feedbackClass = "";
     },
 
     resetGame() {
@@ -488,9 +635,9 @@ function Game() {
         _chart.destroy();
         _chart = null;
       }
-      window.history.replaceState({}, '', location.pathname);
-      this.state = 'setup';
-      this.currentGuess = '';
+      window.history.replaceState({}, "", location.pathname);
+      this.state = "setup";
+      this.currentGuess = "";
       this.acceptedGuesses = [];
       this.acceptedCount = 0;
       this.gameId = null;
@@ -502,10 +649,10 @@ function Game() {
       this.leaderboard = null;
       this.gameStats = null;
       this.leaderboardPage = null;
-      this.leaderboardGoTo = '';
+      this.leaderboardGoTo = "";
       this.guessPending = false;
       this.fallbacksUsed = 0;
-      this.shareMsg = '';
+      this.shareMsg = "";
       this.clearFeedback();
     },
   };
