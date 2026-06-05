@@ -36,6 +36,7 @@
           placeholder="Type a name to start..."
           autocomplete="off"
           autofocus
+          maxlength="200"
         >
       </div>
       <button class="start-btn" @click="loadLeaderboard">Leaderboard</button>
@@ -61,6 +62,7 @@
           :disabled="guessPending"
           placeholder="Type a name..."
           autocomplete="off"
+          maxlength="200"
           autofocus
         >
         <div v-if="feedbackMsg" class="feedback" :class="feedbackClass">{{ feedbackMsg }}</div>
