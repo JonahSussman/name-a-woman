@@ -1,0 +1,109 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Person {
+    pub wikidata_id: String,
+    pub display_name: String,
+    pub gender: String,
+    pub wikipedia_url: Option<String>,
+    pub wikidata_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StartGameRequest {
+    pub category: String,
+    pub target_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StartGameResponse {
+    pub game_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GuessRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuessResponse {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub person: Option<Person>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corrected_from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_complete: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion: Option<CompletionData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_exhausted: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompletionData {
+    pub total_time_ms: i64,
+    pub rank: i64,
+    pub total_players: i64,
+    pub percentile: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LeaderboardEntry {
+    pub rank: i64,
+    pub total_time_ms: i64,
+    pub accepted_count: i64,
+    pub category: String,
+    pub is_you: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LeaderboardResponse {
+    pub top_10: Vec<LeaderboardEntry>,
+    pub bottom_10: Vec<LeaderboardEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub your_neighborhood: Option<Neighborhood>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_leaderboard: Option<PaginatedLeaderboard>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Neighborhood {
+    pub above: Vec<LeaderboardEntry>,
+    pub you: LeaderboardEntry,
+    pub below: Vec<LeaderboardEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PaginatedLeaderboard {
+    pub entries: Vec<LeaderboardEntry>,
+    pub page: i64,
+    pub total_pages: i64,
+    pub total_entries: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GameStatsResponse {
+    pub game: GameSummary,
+    pub guesses: Vec<GuessSummary>,
+    pub ranking: CompletionData,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GameSummary {
+    pub total_time_ms: Option<i64>,
+    pub category: String,
+    pub target_count: i64,
+    pub accepted_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuessSummary {
+    pub order: i64,
+    pub display_name: String,
+    pub guess_time_ms: i64,
+    pub wikipedia_url: Option<String>,
+    pub wikidata_url: String,
+}

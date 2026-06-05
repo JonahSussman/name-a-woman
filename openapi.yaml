@@ -1,0 +1,346 @@
+openapi: 3.1.0
+info:
+  title: Name a Woman API
+  version: 0.1.0
+  description: Speed-naming game — name 100 women (or men, or people) as fast as possible, validated against Wikidata.
+
+servers:
+  - url: /api
+
+paths:
+  /game/start:
+    post:
+      summary: Start a new game
+      operationId: startGame
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartGameRequest"
+      responses:
+        "200":
+          description: Game created
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: Session cookie (naw_session) if not already set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartGameResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /game/{gameId}/guess:
+    post:
+      summary: Submit a guess
+      operationId: guess
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuessRequest"
+      responses:
+        "200":
+          description: Guess result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuessResponse"
+        "404":
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Game already completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /leaderboard:
+    get:
+      summary: Get leaderboard
+      operationId: leaderboard
+      parameters:
+        - name: category
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [women, men, people]
+        - name: count
+          in: query
+          required: true
+          schema:
+            type: integer
+            enum: [10, 100, 1000]
+        - name: game_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: If provided, includes your_neighborhood relative to this game
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: If provided, includes paginated full_leaderboard (50 per page)
+      responses:
+        "200":
+          description: Leaderboard data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardResponse"
+
+  /stats/game/{gameId}:
+    get:
+      summary: Get detailed stats for a completed game
+      operationId: gameStats
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Game statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameStatsResponse"
+        "404":
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /health:
+    get:
+      summary: Health check
+      operationId: health
+      responses:
+        "200":
+          description: OK
+
+components:
+  schemas:
+    StartGameRequest:
+      type: object
+      required: [category, target_count]
+      properties:
+        category:
+          type: string
+          enum: [women, men, people]
+        target_count:
+          type: integer
+          enum: [10, 100, 1000]
+
+    StartGameResponse:
+      type: object
+      required: [game_id]
+      properties:
+        game_id:
+          type: string
+          format: uuid
+
+    GuessRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    GuessResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [accepted, already_guessed, wrong_category, not_found]
+        person:
+          $ref: "#/components/schemas/Person"
+        corrected_from:
+          type: string
+          description: Original input if fuzzy-matched (edit distance <= 2)
+        accepted_count:
+          type: integer
+          description: Total accepted guesses so far in this game
+        game_complete:
+          type: boolean
+        completion:
+          $ref: "#/components/schemas/CompletionData"
+        fallback_exhausted:
+          type: boolean
+          description: True if Wikidata fallback quota (5 per game) is used up
+
+    Person:
+      type: object
+      required: [wikidata_id, display_name, gender, wikidata_url]
+      properties:
+        wikidata_id:
+          type: string
+        display_name:
+          type: string
+        gender:
+          type: string
+          enum: [female, male, other]
+        wikipedia_url:
+          type: string
+          format: uri
+        wikidata_url:
+          type: string
+          format: uri
+
+    CompletionData:
+      type: object
+      required: [total_time_ms, rank, total_players, percentile]
+      properties:
+        total_time_ms:
+          type: integer
+        rank:
+          type: integer
+        total_players:
+          type: integer
+        percentile:
+          type: number
+          format: double
+
+    LeaderboardResponse:
+      type: object
+      required: [top_10, bottom_10]
+      properties:
+        top_10:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+        bottom_10:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+        your_neighborhood:
+          $ref: "#/components/schemas/Neighborhood"
+        full_leaderboard:
+          $ref: "#/components/schemas/PaginatedLeaderboard"
+
+    LeaderboardEntry:
+      type: object
+      required: [rank, total_time_ms, accepted_count, category, is_you]
+      properties:
+        rank:
+          type: integer
+        total_time_ms:
+          type: integer
+        accepted_count:
+          type: integer
+        category:
+          type: string
+        is_you:
+          type: boolean
+
+    Neighborhood:
+      type: object
+      required: [above, you, below]
+      properties:
+        above:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+          description: Up to 10 entries ranked above you
+        you:
+          $ref: "#/components/schemas/LeaderboardEntry"
+        below:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+          description: Up to 10 entries ranked below you
+
+    PaginatedLeaderboard:
+      type: object
+      required: [entries, page, total_pages, total_entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+        page:
+          type: integer
+        total_pages:
+          type: integer
+        total_entries:
+          type: integer
+
+    GameStatsResponse:
+      type: object
+      required: [game, guesses, ranking]
+      properties:
+        game:
+          $ref: "#/components/schemas/GameSummary"
+        guesses:
+          type: array
+          items:
+            $ref: "#/components/schemas/GuessSummary"
+        ranking:
+          $ref: "#/components/schemas/CompletionData"
+
+    GameSummary:
+      type: object
+      required: [category, target_count, accepted_count]
+      properties:
+        total_time_ms:
+          type: integer
+        category:
+          type: string
+        target_count:
+          type: integer
+        accepted_count:
+          type: integer
+
+    GuessSummary:
+      type: object
+      required: [order, display_name, guess_time_ms, wikidata_url]
+      properties:
+        order:
+          type: integer
+        display_name:
+          type: string
+        guess_time_ms:
+          type: integer
+        wikipedia_url:
+          type: string
+          format: uri
+        wikidata_url:
+          type: string
+          format: uri
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
