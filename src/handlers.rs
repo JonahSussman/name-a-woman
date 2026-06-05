@@ -5,43 +5,11 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use crate::AppState;
+use crate::db;
 use crate::models::*;
 
 pub async fn health() -> StatusCode {
     StatusCode::OK
-}
-
-pub async fn start_game(
-    State(_state): State<Arc<AppState>>,
-    Json(_req): Json<StartGameRequest>,
-) -> (StatusCode, Json<StartGameResponse>) {
-    // TODO
-    (
-        StatusCode::OK,
-        Json(StartGameResponse {
-            game_id: uuid::Uuid::new_v4().to_string(),
-        }),
-    )
-}
-
-pub async fn guess(
-    State(_state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
-    Json(_req): Json<GuessRequest>,
-) -> (StatusCode, Json<GuessResponse>) {
-    // TODO
-    (
-        StatusCode::OK,
-        Json(GuessResponse {
-            status: "not_found".to_string(),
-            person: None,
-            corrected_from: None,
-            accepted_count: None,
-            game_complete: None,
-            completion: None,
-            fallback_exhausted: None,
-        }),
-    )
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -53,42 +21,77 @@ pub struct LeaderboardQuery {
 }
 
 pub async fn leaderboard(
-    State(_state): State<Arc<AppState>>,
-    Query(_params): Query<LeaderboardQuery>,
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<LeaderboardQuery>,
 ) -> (StatusCode, Json<LeaderboardResponse>) {
-    // TODO
+    let category = params.category.as_deref().unwrap_or("women");
+    let count = params.count.unwrap_or(100);
+
+    let db = state.db.lock().await;
+
+    let top_10 = db::get_leaderboard_top(&db, category, count, 10).unwrap_or_default();
+    let bottom_10 = db::get_leaderboard_bottom(&db, category, count, 10).unwrap_or_default();
+
+    let your_neighborhood = params.game_id.as_deref().and_then(|gid| {
+        db::get_neighborhood(&db, gid, category, count, 10).ok().flatten()
+    });
+
+    let full_leaderboard = params.page.and_then(|page| {
+        db::get_paginated_leaderboard(&db, category, count, page, 50).ok()
+    });
+
     (
         StatusCode::OK,
         Json(LeaderboardResponse {
-            top_10: vec![],
-            bottom_10: vec![],
-            your_neighborhood: None,
-            full_leaderboard: None,
+            top_10,
+            bottom_10,
+            your_neighborhood,
+            full_leaderboard,
         }),
     )
 }
 
 pub async fn game_stats(
-    State(_state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
-) -> (StatusCode, Json<GameStatsResponse>) {
-    // TODO
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let db = state.db.lock().await;
+
+    let game = match db::get_game(&db, &id) {
+        Ok(Some(g)) => g,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "game not found"})),
+            );
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            );
+        }
+    };
+
+    let guesses = db::get_game_guesses(&db, &id).unwrap_or_default();
+
+    let ranking = if game.completed_at.is_some() {
+        db::get_rank(&db, &id, &game.category, game.target_count).ok()
+    } else {
+        None
+    };
+
     (
         StatusCode::OK,
-        Json(GameStatsResponse {
-            game: GameSummary {
-                total_time_ms: None,
-                category: String::new(),
-                target_count: 0,
-                accepted_count: 0,
+        Json(serde_json::json!({
+            "game": {
+                "total_time_ms": game.total_time_ms,
+                "category": game.category,
+                "target_count": game.target_count,
+                "accepted_count": game.accepted_count,
             },
-            guesses: vec![],
-            ranking: CompletionData {
-                total_time_ms: 0,
-                rank: 0,
-                total_players: 0,
-                percentile: 0.0,
-            },
-        }),
+            "guesses": guesses,
+            "ranking": ranking,
+        })),
     )
 }

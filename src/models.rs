@@ -9,39 +9,6 @@ pub struct Person {
     pub wikidata_url: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct StartGameRequest {
-    pub category: String,
-    pub target_count: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StartGameResponse {
-    pub game_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GuessRequest {
-    pub name: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GuessResponse {
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub person: Option<Person>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub corrected_from: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub accepted_count: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub game_complete: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion: Option<CompletionData>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback_exhausted: Option<bool>,
-}
-
 #[derive(Debug, Serialize)]
 pub struct CompletionData {
     pub total_time_ms: i64,
@@ -82,21 +49,6 @@ pub struct PaginatedLeaderboard {
     pub page: i64,
     pub total_pages: i64,
     pub total_entries: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GameStatsResponse {
-    pub game: GameSummary,
-    pub guesses: Vec<GuessSummary>,
-    pub ranking: CompletionData,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GameSummary {
-    pub total_time_ms: Option<i64>,
-    pub category: String,
-    pub target_count: i64,
-    pub accepted_count: i64,
 }
 
 #[derive(Debug, Serialize)]

@@ -1,4 +1,5 @@
 mod db;
+mod game;
 mod handlers;
 mod models;
 mod normalize;
@@ -8,7 +9,7 @@ mod wikidata;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::get;
 use tokio::sync::Mutex;
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
@@ -29,8 +30,7 @@ async fn main() {
     });
 
     let api = Router::new()
-        .route("/game/start", post(handlers::start_game))
-        .route("/game/{id}/guess", post(handlers::guess))
+        .route("/game/ws", get(game::ws_handler))
         .route("/leaderboard", get(handlers::leaderboard))
         .route("/stats/game/{id}", get(handlers::game_stats))
         .route("/health", get(handlers::health));

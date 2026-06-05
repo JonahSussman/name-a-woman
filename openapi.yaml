@@ -2,77 +2,98 @@ openapi: 3.1.0
 info:
   title: Name a Woman API
   version: 0.1.0
-  description: Speed-naming game — name 100 women (or men, or people) as fast as possible, validated against Wikidata.
+  description: |
+    Speed-naming game — name 100 women (or men, or people) as fast as possible, validated against Wikidata.
+
+    ## Game Loop (WebSocket)
+
+    The game lifecycle uses a WebSocket connection at `GET /api/game/ws`.
+
+    ### Client → Server messages
+
+    **Start a game:**
+    ```json
+    {"action": "start", "category": "women", "target_count": 100}
+    ```
+
+    **Submit a guess:**
+    ```json
+    {"action": "guess", "name": "Marie Curie"}
+    ```
+
+    ### Server → Client messages
+
+    **Game started:**
+    ```json
+    {"type": "started", "game_id": "uuid"}
+    ```
+
+    **Accepted (exact match):**
+    ```json
+    {"type": "accepted", "person": {...}, "accepted_count": 42, "game_complete": false}
+    ```
+
+    **Accepted (fuzzy, edit distance ≤ 2):**
+    ```json
+    {"type": "accepted", "person": {...}, "corrected_from": "Beyonec", "accepted_count": 43, "game_complete": false}
+    ```
+
+    **Game complete (Nth accepted guess):**
+    ```json
+    {"type": "accepted", "person": {...}, "accepted_count": 100, "game_complete": true,
+     "completion": {"total_time_ms": 120000, "rank": 15, "total_players": 230, "percentile": 93.5}}
+    ```
+
+    **Already guessed:**
+    ```json
+    {"type": "already_guessed", "person": {"display_name": "Marie Curie", ...}}
+    ```
+
+    **Wrong category:**
+    ```json
+    {"type": "wrong_category", "person": {"display_name": "Albert Einstein", ...}}
+    ```
+
+    **Not found:**
+    ```json
+    {"type": "not_found"}
+    ```
+
+    **Wikidata fallback exhausted:**
+    ```json
+    {"type": "not_found", "fallback_exhausted": true}
+    ```
+
+    **Game timeout (5 min without a correct guess):**
+    ```json
+    {"type": "game_timeout", "elapsed_ms": 300000}
+    ```
+
+    **Error:**
+    ```json
+    {"type": "error", "message": "..."}
+    ```
+
+    ### Timeout behavior
+
+    The server enforces a 5-minute inactivity timeout. The timer resets **only on accepted guesses** —
+    rejected guesses do not keep the clock alive. When the timeout fires, the server sends a
+    `game_timeout` message and closes the WebSocket connection.
 
 servers:
   - url: /api
 
 paths:
-  /game/start:
-    post:
-      summary: Start a new game
-      operationId: startGame
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/StartGameRequest"
+  /game/ws:
+    get:
+      summary: WebSocket game endpoint
+      operationId: gameWebSocket
+      description: |
+        Upgrades to WebSocket for the game loop. See API description for message protocol.
+        Connection lifecycle: start → guess → guess → ... → complete/timeout/disconnect.
       responses:
-        "200":
-          description: Game created
-          headers:
-            Set-Cookie:
-              schema:
-                type: string
-              description: Session cookie (naw_session) if not already set
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StartGameResponse"
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /game/{gameId}/guess:
-    post:
-      summary: Submit a guess
-      operationId: guess
-      parameters:
-        - name: gameId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GuessRequest"
-      responses:
-        "200":
-          description: Guess result
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GuessResponse"
-        "404":
-          description: Game not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: Game already completed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+        "101":
+          description: Switching Protocols (WebSocket upgrade)
 
   /leaderboard:
     get:
@@ -81,16 +102,16 @@ paths:
       parameters:
         - name: category
           in: query
-          required: true
           schema:
             type: string
             enum: [women, men, people]
+            default: women
         - name: count
           in: query
-          required: true
           schema:
             type: integer
             enum: [10, 100, 1000]
+            default: 100
         - name: game_id
           in: query
           required: false
@@ -148,57 +169,6 @@ paths:
 
 components:
   schemas:
-    StartGameRequest:
-      type: object
-      required: [category, target_count]
-      properties:
-        category:
-          type: string
-          enum: [women, men, people]
-        target_count:
-          type: integer
-          enum: [10, 100, 1000]
-
-    StartGameResponse:
-      type: object
-      required: [game_id]
-      properties:
-        game_id:
-          type: string
-          format: uuid
-
-    GuessRequest:
-      type: object
-      required: [name]
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 200
-
-    GuessResponse:
-      type: object
-      required: [status]
-      properties:
-        status:
-          type: string
-          enum: [accepted, already_guessed, wrong_category, not_found]
-        person:
-          $ref: "#/components/schemas/Person"
-        corrected_from:
-          type: string
-          description: Original input if fuzzy-matched (edit distance <= 2)
-        accepted_count:
-          type: integer
-          description: Total accepted guesses so far in this game
-        game_complete:
-          type: boolean
-        completion:
-          $ref: "#/components/schemas/CompletionData"
-        fallback_exhausted:
-          type: boolean
-          description: True if Wikidata fallback quota (5 per game) is used up
-
     Person:
       type: object
       required: [wikidata_id, display_name, gender, wikidata_url]
@@ -271,14 +241,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LeaderboardEntry"
-          description: Up to 10 entries ranked above you
         you:
           $ref: "#/components/schemas/LeaderboardEntry"
         below:
           type: array
           items:
             $ref: "#/components/schemas/LeaderboardEntry"
-          description: Up to 10 entries ranked below you
 
     PaginatedLeaderboard:
       type: object
@@ -297,29 +265,26 @@ components:
 
     GameStatsResponse:
       type: object
-      required: [game, guesses, ranking]
+      required: [game, guesses]
       properties:
         game:
-          $ref: "#/components/schemas/GameSummary"
+          type: object
+          required: [category, target_count, accepted_count]
+          properties:
+            total_time_ms:
+              type: integer
+            category:
+              type: string
+            target_count:
+              type: integer
+            accepted_count:
+              type: integer
         guesses:
           type: array
           items:
             $ref: "#/components/schemas/GuessSummary"
         ranking:
           $ref: "#/components/schemas/CompletionData"
-
-    GameSummary:
-      type: object
-      required: [category, target_count, accepted_count]
-      properties:
-        total_time_ms:
-          type: integer
-        category:
-          type: string
-        target_count:
-          type: integer
-        accepted_count:
-          type: integer
 
     GuessSummary:
       type: object
