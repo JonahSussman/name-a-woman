@@ -6,9 +6,42 @@ use crate::normalize::normalize_name;
 pub fn init_db(path: &str) -> Result<Connection> {
     let conn = Connection::open(path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-    conn.execute_batch(include_str!("../schema.sql"))?;
-    backfill_fts(&conn)?;
+    migrate(&conn)?;
     Ok(conn)
+}
+
+fn get_schema_version(conn: &Connection) -> i64 {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL DEFAULT 0)",
+    )
+    .ok();
+    conn.query_row("SELECT version FROM schema_version", [], |row| row.get(0))
+        .unwrap_or(0)
+}
+
+fn set_schema_version(conn: &Connection, version: i64) -> Result<()> {
+    conn.execute_batch(
+        "DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (0)",
+    )?;
+    conn.execute("UPDATE schema_version SET version = ?1", params![version])?;
+    Ok(())
+}
+
+fn migrate(conn: &Connection) -> Result<()> {
+    let version = get_schema_version(conn);
+
+    if version < 1 {
+        conn.execute_batch(include_str!("../schema.sql"))?;
+        backfill_fts(conn)?;
+        set_schema_version(conn, 1)?;
+    }
+
+    // Abandon any games left active from a previous run
+    conn.execute_batch(
+        "UPDATE games SET completed_at = datetime('now') WHERE completed_at IS NULL",
+    )?;
+
+    Ok(())
 }
 
 fn backfill_fts(conn: &Connection) -> Result<()> {
@@ -238,14 +271,13 @@ pub struct GameRow {
     pub category: String,
     pub target_count: i64,
     pub accepted_count: i64,
-    pub fallback_lookups_used: i64,
     pub completed_at: Option<String>,
     pub total_time_ms: Option<i64>,
 }
 
 pub fn get_game(conn: &Connection, game_id: &str) -> Result<Option<GameRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, user_id, category, target_count, accepted_count, fallback_lookups_used, completed_at, total_time_ms
+        "SELECT id, user_id, category, target_count, accepted_count, completed_at, total_time_ms
          FROM games WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map(params![game_id], |row| {
@@ -255,9 +287,8 @@ pub fn get_game(conn: &Connection, game_id: &str) -> Result<Option<GameRow>> {
             category: row.get(2)?,
             target_count: row.get(3)?,
             accepted_count: row.get(4)?,
-            fallback_lookups_used: row.get(5)?,
-            completed_at: row.get(6)?,
-            total_time_ms: row.get(7)?,
+            completed_at: row.get(5)?,
+            total_time_ms: row.get(6)?,
         })
     })?;
     match rows.next() {
@@ -266,60 +297,29 @@ pub fn get_game(conn: &Connection, game_id: &str) -> Result<Option<GameRow>> {
     }
 }
 
-pub fn is_person_already_guessed(
+pub fn flush_game_state(
     conn: &Connection,
     game_id: &str,
-    wikidata_id: &str,
-) -> Result<bool> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM guesses WHERE game_id = ?1 AND person_id = ?2 AND accepted = 1",
-        params![game_id, wikidata_id],
-        |row| row.get(0),
-    )?;
-    Ok(count > 0)
-}
-
-pub fn insert_guess(
-    conn: &Connection,
-    game_id: &str,
-    name_entered: &str,
-    person_id: Option<&str>,
-    accepted: bool,
-    guess_time_ms: i64,
-    guess_order: i64,
+    guesses: &[(&str, &str, i64, i64)],
+    accepted_count: i64,
+    fallback_lookups: i64,
 ) -> Result<()> {
+    conn.execute_batch("BEGIN")?;
+    {
+        let mut stmt = conn.prepare(
+            "INSERT INTO guesses (game_id, name_entered, person_id, accepted, guess_time_ms, guess_order)
+             VALUES (?1, ?2, ?3, 1, ?4, ?5)",
+        )?;
+        for (name_entered, person_id, guess_time_ms, guess_order) in guesses {
+            stmt.execute(params![game_id, name_entered, person_id, guess_time_ms, guess_order])?;
+        }
+    }
     conn.execute(
-        "INSERT INTO guesses (game_id, name_entered, person_id, accepted, guess_time_ms, guess_order)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![game_id, name_entered, person_id, accepted as i64, guess_time_ms, guess_order],
+        "UPDATE games SET accepted_count = ?2, fallback_lookups_used = ?3 WHERE id = ?1",
+        params![game_id, accepted_count, fallback_lookups],
     )?;
+    conn.execute_batch("COMMIT")?;
     Ok(())
-}
-
-pub fn increment_accepted_count(conn: &Connection, game_id: &str) -> Result<i64> {
-    conn.execute(
-        "UPDATE games SET accepted_count = accepted_count + 1 WHERE id = ?1",
-        params![game_id],
-    )?;
-    let count: i64 = conn.query_row(
-        "SELECT accepted_count FROM games WHERE id = ?1",
-        params![game_id],
-        |row| row.get(0),
-    )?;
-    Ok(count)
-}
-
-pub fn increment_fallback_lookups(conn: &Connection, game_id: &str) -> Result<i64> {
-    conn.execute(
-        "UPDATE games SET fallback_lookups_used = fallback_lookups_used + 1 WHERE id = ?1",
-        params![game_id],
-    )?;
-    let count: i64 = conn.query_row(
-        "SELECT fallback_lookups_used FROM games WHERE id = ?1",
-        params![game_id],
-        |row| row.get(0),
-    )?;
-    Ok(count)
 }
 
 pub fn abandon_game(conn: &Connection, game_id: &str) -> Result<()> {
@@ -331,19 +331,17 @@ pub fn abandon_game(conn: &Connection, game_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn complete_game(conn: &Connection, game_id: &str) -> Result<i64> {
+
+pub fn complete_game_with_time(
+    conn: &Connection,
+    game_id: &str,
+    total_time_ms: i64,
+) -> Result<()> {
     conn.execute(
-        "UPDATE games SET completed_at = datetime('now'),
-                          total_time_ms = CAST((julianday(datetime('now')) - julianday(started_at)) * 86400000 AS INTEGER)
-         WHERE id = ?1",
-        params![game_id],
+        "UPDATE games SET completed_at = datetime('now'), total_time_ms = ?2 WHERE id = ?1",
+        params![game_id, total_time_ms],
     )?;
-    let time_ms: i64 = conn.query_row(
-        "SELECT total_time_ms FROM games WHERE id = ?1",
-        params![game_id],
-        |row| row.get(0),
-    )?;
-    Ok(time_ms)
+    Ok(())
 }
 
 pub fn get_rank(

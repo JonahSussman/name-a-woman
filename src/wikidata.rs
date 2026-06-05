@@ -1,8 +1,22 @@
 use crate::models::Person;
 
+#[async_trait::async_trait]
+pub trait PersonLookup: Send + Sync {
+    async fn lookup_person(&self, name: &str) -> Option<(Person, Vec<String>)>;
+}
+
+pub struct WikidataLookup;
+
+#[async_trait::async_trait]
+impl PersonLookup for WikidataLookup {
+    async fn lookup_person(&self, name: &str) -> Option<(Person, Vec<String>)> {
+        lookup_person(name).await
+    }
+}
+
 const WIKIDATA_API: &str = "https://www.wikidata.org/w/api.php";
 
-pub async fn lookup_person(name: &str) -> Option<(Person, Vec<String>)> {
+async fn lookup_person(name: &str) -> Option<(Person, Vec<String>)> {
     let client = reqwest::Client::builder()
         .user_agent("NameAWomanBot/0.1 (https://jonahsussman.net; educational project)")
         .timeout(std::time::Duration::from_secs(10))

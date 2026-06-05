@@ -1,12 +1,3 @@
-mod config;
-mod db;
-mod game;
-mod handlers;
-mod models;
-mod normalize;
-mod session;
-mod wikidata;
-
 use std::sync::Arc;
 
 use axum::Router;
@@ -15,10 +6,7 @@ use tokio::sync::Mutex;
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
-pub struct AppState {
-    pub db: Mutex<rusqlite::Connection>,
-    pub config: config::Config,
-}
+use name_a_woman::{AppState, config, db, game, handlers, wikidata};
 
 #[tokio::main]
 async fn main() {
@@ -28,15 +16,17 @@ async fn main() {
 
     let config = config::Config::from_env();
     tracing::info!(
+        db_path = %config.db_path,
         max_fallback_lookups = config.max_fallback_lookups,
         inactivity_timeout_secs = config.inactivity_timeout_secs,
         "loaded config"
     );
 
-    let conn = db::init_db("data/names.db").expect("failed to initialize database");
+    let conn = db::init_db(&config.db_path).expect("failed to initialize database");
     let state = Arc::new(AppState {
         db: Mutex::new(conn),
         config,
+        lookup: Arc::new(wikidata::WikidataLookup),
     });
 
     let api = Router::new()

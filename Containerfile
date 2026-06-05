@@ -18,6 +18,7 @@ COPY static/ /app/static/
 COPY schema.sql /app/
 WORKDIR /app
 ENV RUST_LOG=info
+ENV NAW_DB_PATH=data/names.db
 ENV NAW_MAX_FALLBACK_LOOKUPS=20
 ENV NAW_INACTIVITY_TIMEOUT_SECS=300
 VOLUME ["/app/data"]
