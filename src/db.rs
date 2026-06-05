@@ -311,7 +311,13 @@ pub fn flush_game_state(
              VALUES (?1, ?2, ?3, 1, ?4, ?5)",
         )?;
         for (name_entered, person_id, guess_time_ms, guess_order) in guesses {
-            stmt.execute(params![game_id, name_entered, person_id, guess_time_ms, guess_order])?;
+            stmt.execute(params![
+                game_id,
+                name_entered,
+                person_id,
+                guess_time_ms,
+                guess_order
+            ])?;
         }
     }
     conn.execute(
@@ -331,12 +337,7 @@ pub fn abandon_game(conn: &Connection, game_id: &str) -> Result<()> {
     Ok(())
 }
 
-
-pub fn complete_game_with_time(
-    conn: &Connection,
-    game_id: &str,
-    total_time_ms: i64,
-) -> Result<()> {
+pub fn complete_game_with_time(conn: &Connection, game_id: &str, total_time_ms: i64) -> Result<()> {
     conn.execute(
         "UPDATE games SET completed_at = datetime('now'), total_time_ms = ?2 WHERE id = ?1",
         params![game_id, total_time_ms],

@@ -251,13 +251,17 @@ async fn handle_game(
             continue;
         }
 
-        let time_at_guess = time_start
-            .elapsed()
-            .saturating_sub(time_total_paused);
+        let time_at_guess = time_start.elapsed().saturating_sub(time_total_paused);
         guess_order += 1;
 
         let mut response = process_guess(
-            &state, &mut game, category, target_count, &name, time_at_guess, guess_order,
+            &state,
+            &mut game,
+            category,
+            target_count,
+            &name,
+            time_at_guess,
+            guess_order,
         )
         .await;
 
@@ -282,8 +286,13 @@ async fn handle_game(
         if is_complete {
             completed = true;
             let total_time = time_start.elapsed().saturating_sub(time_total_paused);
-            let completion = flush_game(&state, &game_id, &game, category, target_count, total_time).await;
-            if let ServerMessage::Accepted { completion: ref mut c, .. } = response {
+            let completion =
+                flush_game(&state, &game_id, &game, category, target_count, total_time).await;
+            if let ServerMessage::Accepted {
+                completion: ref mut c,
+                ..
+            } = response
+            {
                 *c = completion;
             }
             let _ = send(&mut socket, &response).await;
@@ -311,9 +320,22 @@ async fn flush_game(
     let guesses: Vec<(&str, &str, i64, i64)> = game
         .guesses
         .iter()
-        .map(|g| (g.name_entered.as_str(), g.person_id.as_str(), g.guess_time_ms, g.guess_order))
+        .map(|g| {
+            (
+                g.name_entered.as_str(),
+                g.person_id.as_str(),
+                g.guess_time_ms,
+                g.guess_order,
+            )
+        })
         .collect();
-    let _ = db::flush_game_state(&db, game_id, &guesses, game.accepted_count, game.fallback_lookups);
+    let _ = db::flush_game_state(
+        &db,
+        game_id,
+        &guesses,
+        game.accepted_count,
+        game.fallback_lookups,
+    );
 
     let total_time_ms = total_time.as_millis() as i64;
     let _ = db::complete_game_with_time(&db, game_id, total_time_ms);
@@ -336,12 +358,25 @@ async fn process_guess(
 
     let matches = match db::lookup_exact(&db, name) {
         Ok(m) => m,
-        Err(e) => return ServerMessage::Error { message: e.to_string() },
+        Err(e) => {
+            return ServerMessage::Error {
+                message: e.to_string(),
+            };
+        }
     };
 
     match find_person(&matches, gender_filter, &game.guessed_ids) {
         Some(PersonMatch::Valid(person)) => {
-            return accept_guess(game, target_count, name, &person, None, time_at_guess, guess_order, false);
+            return accept_guess(
+                game,
+                target_count,
+                name,
+                &person,
+                None,
+                time_at_guess,
+                guess_order,
+                false,
+            );
         }
         Some(PersonMatch::AlreadyGuessed(person)) => {
             return ServerMessage::AlreadyGuessed { person };
@@ -351,24 +386,41 @@ async fn process_guess(
 
     if let Some(wrong) = matches.first() {
         if gender_filter.is_some() && wrong.gender != gender_filter.unwrap() {
-            return ServerMessage::WrongCategory { person: wrong.clone() };
+            return ServerMessage::WrongCategory {
+                person: wrong.clone(),
+            };
         }
     }
 
     // Try fuzzy match
     let fuzzy_matches = match db::lookup_fuzzy(&db, name, 2) {
         Ok(m) => m,
-        Err(e) => return ServerMessage::Error { message: e.to_string() },
+        Err(e) => {
+            return ServerMessage::Error {
+                message: e.to_string(),
+            };
+        }
     };
 
     let fuzzy_people: Vec<Person> = fuzzy_matches.into_iter().map(|(p, _)| p).collect();
-    if let Some(PersonMatch::Valid(person)) = find_person(&fuzzy_people, gender_filter, &game.guessed_ids) {
+    if let Some(PersonMatch::Valid(person)) =
+        find_person(&fuzzy_people, gender_filter, &game.guessed_ids)
+    {
         let corrected_from = if normalize_name(name) != normalize_name(&person.display_name) {
             Some(name.to_string())
         } else {
             None
         };
-        return accept_guess(game, target_count, name, &person, corrected_from, time_at_guess, guess_order, false);
+        return accept_guess(
+            game,
+            target_count,
+            name,
+            &person,
+            corrected_from,
+            time_at_guess,
+            guess_order,
+            false,
+        );
     }
 
     // Try Wikidata fallback
@@ -407,7 +459,16 @@ async fn process_guess(
         }
     }
 
-    accept_guess(game, target_count, name, &person, None, time_at_guess, guess_order, true)
+    accept_guess(
+        game,
+        target_count,
+        name,
+        &person,
+        None,
+        time_at_guess,
+        guess_order,
+        true,
+    )
 }
 
 enum PersonMatch {

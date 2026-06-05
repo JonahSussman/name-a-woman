@@ -78,9 +78,7 @@ async fn start_server(mock: MockLookup) -> u16 {
         .route("/stats/game/{id}", get(handlers::game_stats))
         .route("/health", get(handlers::health));
 
-    let app = Router::new()
-        .nest("/api", api)
-        .with_state(state);
+    let app = Router::new().nest("/api", api).with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -90,16 +88,13 @@ async fn start_server(mock: MockLookup) -> u16 {
     port
 }
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn connect(port: u16) -> WsStream {
-    let (ws, _) = tokio_tungstenite::connect_async(
-        format!("ws://127.0.0.1:{port}/api/game/ws"),
-    )
-    .await
-    .unwrap();
+    let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/api/game/ws"))
+        .await
+        .unwrap();
     ws
 }
 
@@ -117,7 +112,11 @@ async fn recv_json(ws: &mut WsStream) -> serde_json::Value {
 }
 
 async fn start_game(ws: &mut WsStream, category: &str, target_count: i64) -> serde_json::Value {
-    send_json(ws, &serde_json::json!({"action": "start", "category": category, "target_count": target_count})).await;
+    send_json(
+        ws,
+        &serde_json::json!({"action": "start", "category": category, "target_count": target_count}),
+    )
+    .await;
     let resp = recv_json(ws).await;
     assert_eq!(resp["type"], "started");
     resp
@@ -130,7 +129,10 @@ async fn guess(ws: &mut WsStream, name: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn test_accepted_guess() {
-    let port = start_server(MockLookup { people: HashMap::new() }).await;
+    let port = start_server(MockLookup {
+        people: HashMap::new(),
+    })
+    .await;
     let mut ws = connect(port).await;
     start_game(&mut ws, "women", 10).await;
 
@@ -143,7 +145,10 @@ async fn test_accepted_guess() {
 
 #[tokio::test]
 async fn test_already_guessed() {
-    let port = start_server(MockLookup { people: HashMap::new() }).await;
+    let port = start_server(MockLookup {
+        people: HashMap::new(),
+    })
+    .await;
     let mut ws = connect(port).await;
     start_game(&mut ws, "women", 10).await;
 
@@ -154,7 +159,10 @@ async fn test_already_guessed() {
 
 #[tokio::test]
 async fn test_wrong_category() {
-    let port = start_server(MockLookup { people: HashMap::new() }).await;
+    let port = start_server(MockLookup {
+        people: HashMap::new(),
+    })
+    .await;
     let mut ws = connect(port).await;
     start_game(&mut ws, "women", 10).await;
 
@@ -164,7 +172,10 @@ async fn test_wrong_category() {
 
 #[tokio::test]
 async fn test_not_found() {
-    let port = start_server(MockLookup { people: HashMap::new() }).await;
+    let port = start_server(MockLookup {
+        people: HashMap::new(),
+    })
+    .await;
     let mut ws = connect(port).await;
     start_game(&mut ws, "women", 10).await;
 
@@ -191,7 +202,10 @@ async fn test_fallback_lookup() {
 
 #[tokio::test]
 async fn test_name_too_long() {
-    let port = start_server(MockLookup { people: HashMap::new() }).await;
+    let port = start_server(MockLookup {
+        people: HashMap::new(),
+    })
+    .await;
     let mut ws = connect(port).await;
     start_game(&mut ws, "women", 10).await;
 
@@ -203,7 +217,10 @@ async fn test_name_too_long() {
 
 #[tokio::test]
 async fn test_game_completion() {
-    let port = start_server(MockLookup { people: HashMap::new() }).await;
+    let port = start_server(MockLookup {
+        people: HashMap::new(),
+    })
+    .await;
     let mut ws = connect(port).await;
     start_game(&mut ws, "women", 10).await;
 
