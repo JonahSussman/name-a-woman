@@ -28,7 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "Filtering for: {} | max: {}",
         gender_filter.as_deref().unwrap_or("all genders"),
-        if max_people == u64::MAX { "unlimited".to_string() } else { max_people.to_string() }
+        if max_people == u64::MAX {
+            "unlimited".to_string()
+        } else {
+            max_people.to_string()
+        }
     );
 
     let start = std::time::Instant::now();
@@ -67,11 +71,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => continue,
         };
 
-        let is_human = claims.get("P31").and_then(|v| v.as_array()).map_or(false, |arr| {
-            arr.iter().any(|claim| {
-                claim["mainsnak"]["datavalue"]["value"]["id"].as_str() == Some("Q5")
-            })
-        });
+        let is_human = claims
+            .get("P31")
+            .and_then(|v| v.as_array())
+            .map_or(false, |arr| {
+                arr.iter().any(|claim| {
+                    claim["mainsnak"]["datavalue"]["value"]["id"].as_str() == Some("Q5")
+                })
+            });
         if !is_human {
             skipped_not_human += 1;
             continue;
@@ -159,7 +166,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let elapsed = start.elapsed().as_secs();
             let rate = if elapsed > 0 { imported / elapsed } else { 0 };
-            let remaining = if rate > 0 { max_people.saturating_sub(imported) / rate } else { 0 };
+            let remaining = if rate > 0 {
+                max_people.saturating_sub(imported) / rate
+            } else {
+                0
+            };
             println!(
                 "[{imported}/{max_people}] {lines_read} lines scanned | {skipped_not_human} not human | {skipped_gender} wrong gender | ~{rate}/s | ~{remaining}s remaining"
             );
@@ -175,7 +186,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let elapsed = start.elapsed().as_secs();
     let final_count: i64 = conn.query_row("SELECT COUNT(*) FROM people", [], |row| row.get(0))?;
-    let variant_count: i64 = conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
+    let variant_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
     println!("\n=== Import complete ===");
     println!("Scanned {lines_read} entities in {elapsed}s");
     println!("Imported {imported} people (+ aliases)");

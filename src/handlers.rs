@@ -34,12 +34,14 @@ pub async fn leaderboard(
     let bottom_10 = db::get_leaderboard_bottom(&db, cat, count, 10).unwrap_or_default();
 
     let your_neighborhood = params.game_id.as_deref().and_then(|gid| {
-        db::get_neighborhood(&db, gid, cat, count, 10).ok().flatten()
+        db::get_neighborhood(&db, gid, cat, count, 10)
+            .ok()
+            .flatten()
     });
 
-    let full_leaderboard = params.page.and_then(|page| {
-        db::get_paginated_leaderboard(&db, cat, count, page, 50).ok()
-    });
+    let full_leaderboard = params
+        .page
+        .and_then(|page| db::get_paginated_leaderboard(&db, cat, count, page, 50).ok());
 
     (
         StatusCode::OK,

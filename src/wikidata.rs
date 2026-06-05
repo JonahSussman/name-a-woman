@@ -24,11 +24,14 @@ pub async fn lookup_person(name: &str) -> Option<(Person, Vec<String>)> {
         let entity = fetch_entity(&client, qid).await?;
         let claims = entity["claims"].as_object()?;
 
-        let is_human = claims.get("P31").and_then(|v| v.as_array()).map_or(false, |arr| {
-            arr.iter().any(|claim| {
-                claim["mainsnak"]["datavalue"]["value"]["id"].as_str() == Some("Q5")
-            })
-        });
+        let is_human = claims
+            .get("P31")
+            .and_then(|v| v.as_array())
+            .map_or(false, |arr| {
+                arr.iter().any(|claim| {
+                    claim["mainsnak"]["datavalue"]["value"]["id"].as_str() == Some("Q5")
+                })
+            });
         if !is_human {
             continue;
         }
@@ -45,9 +48,7 @@ pub async fn lookup_person(name: &str) -> Option<(Person, Vec<String>)> {
             _ => "other",
         };
 
-        let display_name = entity["labels"]["en"]["value"]
-            .as_str()
-            .unwrap_or(name);
+        let display_name = entity["labels"]["en"]["value"].as_str().unwrap_or(name);
 
         let wikipedia_url = entity["sitelinks"]["enwiki"]["url"]
             .as_str()
@@ -84,5 +85,7 @@ async fn fetch_entity(client: &reqwest::Client, qid: &str) -> Option<serde_json:
     );
     let resp = client.get(&url).send().await.ok()?;
     let data: serde_json::Value = resp.json().await.ok()?;
-    data["entities"][qid].as_object().map(|o| serde_json::Value::Object(o.clone()))
+    data["entities"][qid]
+        .as_object()
+        .map(|o| serde_json::Value::Object(o.clone()))
 }

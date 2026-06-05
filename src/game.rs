@@ -14,12 +14,14 @@ use crate::normalize::normalize_name;
 use crate::session;
 use crate::wikidata;
 
-
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action")]
 enum ClientMessage {
     #[serde(rename = "start")]
-    Start { category: Category, target_count: i64 },
+    Start {
+        category: Category,
+        target_count: i64,
+    },
     #[serde(rename = "guess")]
     Guess { name: String },
 }
@@ -66,30 +68,59 @@ pub async fn ws_handler(
     ws.on_upgrade(move |socket| handle_game(socket, state, user_id, ip_hash))
 }
 
-async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: String, ip_hash: String) {
+async fn handle_game(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+    user_id: String,
+    ip_hash: String,
+) {
+    // Get the first message
     let first_msg = match timeout(Duration::from_secs(30), socket.recv()).await {
         Ok(Some(Ok(Message::Text(text)))) => text,
         _ => return,
     };
 
+    // Try to convert the json to a ClientMessage
     let start_msg: ClientMessage = match serde_json::from_str(&first_msg) {
         Ok(msg) => msg,
         Err(e) => {
-            let _ = send(&mut socket, &ServerMessage::Error { message: e.to_string() }).await;
+            let _ = send(
+                &mut socket,
+                &ServerMessage::Error {
+                    message: e.to_string(),
+                },
+            )
+            .await;
             return;
         }
     };
 
+    // Try to convert the ClientMessage to a Start message and validate the fields
     let (category, target_count) = match start_msg {
-        ClientMessage::Start { category, target_count } => {
+        ClientMessage::Start {
+            category,
+            target_count,
+        } => {
             if !matches!(target_count, 10 | 100 | 1000) {
-                let _ = send(&mut socket, &ServerMessage::Error { message: "invalid target_count".into() }).await;
+                let _ = send(
+                    &mut socket,
+                    &ServerMessage::Error {
+                        message: "invalid target_count".into(),
+                    },
+                )
+                .await;
                 return;
             }
             (category, target_count)
         }
         _ => {
-            let _ = send(&mut socket, &ServerMessage::Error { message: "expected start action".into() }).await;
+            let _ = send(
+                &mut socket,
+                &ServerMessage::Error {
+                    message: "expected start action".into(),
+                },
+            )
+            .await;
             return;
         }
     };
@@ -98,16 +129,42 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
     {
         let db = state.db.lock().await;
         if db::has_active_game(&db, &user_id).unwrap_or(false) {
-            let _ = send(&mut socket, &ServerMessage::Error { message: "you already have an active game".into() }).await;
+            let _ = send(
+                &mut socket,
+                &ServerMessage::Error {
+                    message: "you already have an active game".into(),
+                },
+            )
+            .await;
             return;
         }
-        if let Err(e) = db::create_game(&db, &game_id, &user_id, &ip_hash, category.as_str(), target_count) {
-            let _ = send(&mut socket, &ServerMessage::Error { message: e.to_string() }).await;
+        if let Err(e) = db::create_game(
+            &db,
+            &game_id,
+            &user_id,
+            &ip_hash,
+            category.as_str(),
+            target_count,
+        ) {
+            let _ = send(
+                &mut socket,
+                &ServerMessage::Error {
+                    message: e.to_string(),
+                },
+            )
+            .await;
             return;
         }
     }
 
-    let _ = send(&mut socket, &ServerMessage::Started { game_id: game_id.clone(), max_fallbacks: state.config.max_fallback_lookups }).await;
+    let _ = send(
+        &mut socket,
+        &ServerMessage::Started {
+            game_id: game_id.clone(),
+            max_fallbacks: state.config.max_fallback_lookups,
+        },
+    )
+    .await;
 
     let game_start = Instant::now();
     let mut last_correct = Instant::now();
@@ -116,12 +173,17 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
     let mut paused_since_correct = Duration::ZERO;
 
     loop {
-        let remaining = Duration::from_secs(state.config.inactivity_timeout_secs).saturating_sub(last_correct.elapsed().saturating_sub(paused_since_correct));
+        let remaining = Duration::from_secs(state.config.inactivity_timeout_secs)
+            .saturating_sub(last_correct.elapsed().saturating_sub(paused_since_correct));
         if remaining.is_zero() {
             let player_elapsed = game_start.elapsed().saturating_sub(total_paused);
-            let _ = send(&mut socket, &ServerMessage::GameTimeout {
-                elapsed_ms: player_elapsed.as_millis() as u64,
-            }).await;
+            let _ = send(
+                &mut socket,
+                &ServerMessage::GameTimeout {
+                    elapsed_ms: player_elapsed.as_millis() as u64,
+                },
+            )
+            .await;
             break;
         }
 
@@ -132,9 +194,13 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
             Ok(Some(Ok(_))) => continue,
             Err(_) => {
                 let player_elapsed = game_start.elapsed().saturating_sub(total_paused);
-                let _ = send(&mut socket, &ServerMessage::GameTimeout {
-                    elapsed_ms: player_elapsed.as_millis() as u64,
-                }).await;
+                let _ = send(
+                    &mut socket,
+                    &ServerMessage::GameTimeout {
+                        elapsed_ms: player_elapsed.as_millis() as u64,
+                    },
+                )
+                .await;
                 break;
             }
         };
@@ -147,7 +213,13 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
                 let d = process_start.elapsed();
                 total_paused += d;
                 paused_since_correct += d;
-                let _ = send(&mut socket, &ServerMessage::Error { message: e.to_string() }).await;
+                let _ = send(
+                    &mut socket,
+                    &ServerMessage::Error {
+                        message: e.to_string(),
+                    },
+                )
+                .await;
                 continue;
             }
         };
@@ -158,30 +230,58 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
                 let d = process_start.elapsed();
                 total_paused += d;
                 paused_since_correct += d;
-                let _ = send(&mut socket, &ServerMessage::Error { message: "expected guess action".into() }).await;
+                let _ = send(
+                    &mut socket,
+                    &ServerMessage::Error {
+                        message: "expected guess action".into(),
+                    },
+                )
+                .await;
                 continue;
             }
         };
 
-        let elapsed_ms = game_start.elapsed().saturating_sub(total_paused).as_millis() as i64;
+        let elapsed_ms = game_start
+            .elapsed()
+            .saturating_sub(total_paused)
+            .as_millis() as i64;
         guess_order += 1;
 
         let (response, needs_fallback) = {
             let db = state.db.lock().await;
-            let r = process_guess(&db, &game_id, category, target_count, &name, elapsed_ms, guess_order);
+            let r = process_guess(
+                &db,
+                &game_id,
+                category,
+                target_count,
+                &name,
+                elapsed_ms,
+                guess_order,
+            );
             match r {
                 GuessResult::Response(msg) => (msg, false),
-                GuessResult::TryFallback => (ServerMessage::NotFound { fallback_exhausted: None }, true),
+                GuessResult::TryFallback => (
+                    ServerMessage::NotFound {
+                        fallback_exhausted: None,
+                    },
+                    true,
+                ),
             }
         };
 
         let response = if needs_fallback {
             let fallback_count = {
                 let db = state.db.lock().await;
-                db::get_game(&db, &game_id).ok().flatten().map(|g| g.fallback_lookups_used).unwrap_or(5)
+                db::get_game(&db, &game_id)
+                    .ok()
+                    .flatten()
+                    .map(|g| g.fallback_lookups_used)
+                    .unwrap_or(5)
             };
             if fallback_count >= state.config.max_fallback_lookups {
-                ServerMessage::NotFound { fallback_exhausted: Some(true) }
+                ServerMessage::NotFound {
+                    fallback_exhausted: Some(true),
+                }
             } else if let Some((person, aliases)) = wikidata::lookup_person(&name).await {
                 let db = state.db.lock().await;
                 let _ = db::increment_fallback_lookups(&db, &game_id);
@@ -191,21 +291,47 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
                     let _ = db::insert_name_variant(&db, &person.wikidata_id, alias);
                 }
 
-                if db::is_person_already_guessed(&db, &game_id, &person.wikidata_id).unwrap_or(false) {
+                if db::is_person_already_guessed(&db, &game_id, &person.wikidata_id)
+                    .unwrap_or(false)
+                {
                     ServerMessage::AlreadyGuessed { person }
                 } else if let Some(g) = category.gender_filter() {
                     if person.gender != g {
                         ServerMessage::WrongCategory { person }
                     } else {
-                        accept_guess(&db, &game_id, category, target_count, &name, &person, None, elapsed_ms, guess_order, true)
+                        accept_guess(
+                            &db,
+                            &game_id,
+                            category,
+                            target_count,
+                            &name,
+                            &person,
+                            None,
+                            elapsed_ms,
+                            guess_order,
+                            true,
+                        )
                     }
                 } else {
-                    accept_guess(&db, &game_id, category, target_count, &name, &person, None, elapsed_ms, guess_order, true)
+                    accept_guess(
+                        &db,
+                        &game_id,
+                        category,
+                        target_count,
+                        &name,
+                        &person,
+                        None,
+                        elapsed_ms,
+                        guess_order,
+                        true,
+                    )
                 }
             } else {
                 let db = state.db.lock().await;
                 let _ = db::increment_fallback_lookups(&db, &game_id);
-                ServerMessage::NotFound { fallback_exhausted: None }
+                ServerMessage::NotFound {
+                    fallback_exhausted: None,
+                }
             }
         } else {
             response
@@ -216,7 +342,13 @@ async fn handle_game(mut socket: WebSocket, state: Arc<AppState>, user_id: Strin
         paused_since_correct += pause_duration;
 
         let is_accepted = matches!(&response, ServerMessage::Accepted { .. });
-        let is_complete = matches!(&response, ServerMessage::Accepted { game_complete: true, .. });
+        let is_complete = matches!(
+            &response,
+            ServerMessage::Accepted {
+                game_complete: true,
+                ..
+            }
+        );
 
         if is_accepted {
             last_correct = Instant::now();
@@ -253,11 +385,26 @@ fn process_guess(
 
     let matches = match db::lookup_exact(db, name) {
         Ok(m) => m,
-        Err(e) => return GuessResult::Response(ServerMessage::Error { message: e.to_string() }),
+        Err(e) => {
+            return GuessResult::Response(ServerMessage::Error {
+                message: e.to_string(),
+            });
+        }
     };
 
     if let Some(person) = find_valid_person(&matches, gender_filter, db, game_id) {
-        return GuessResult::Response(accept_guess(db, game_id, category, target_count, name, &person, None, elapsed_ms, guess_order, false));
+        return GuessResult::Response(accept_guess(
+            db,
+            game_id,
+            category,
+            target_count,
+            name,
+            &person,
+            None,
+            elapsed_ms,
+            guess_order,
+            false,
+        ));
     }
 
     if let Some(person) = find_already_guessed(&matches, gender_filter, db, game_id) {
@@ -266,13 +413,19 @@ fn process_guess(
 
     if let Some(wrong) = matches.first() {
         if gender_filter.is_some() && wrong.gender != gender_filter.unwrap() {
-            return GuessResult::Response(ServerMessage::WrongCategory { person: wrong.clone() });
+            return GuessResult::Response(ServerMessage::WrongCategory {
+                person: wrong.clone(),
+            });
         }
     }
 
     let fuzzy_matches = match db::lookup_fuzzy(db, name, 2) {
         Ok(m) => m,
-        Err(e) => return GuessResult::Response(ServerMessage::Error { message: e.to_string() }),
+        Err(e) => {
+            return GuessResult::Response(ServerMessage::Error {
+                message: e.to_string(),
+            });
+        }
     };
 
     let fuzzy_people: Vec<Person> = fuzzy_matches.into_iter().map(|(p, _)| p).collect();
@@ -282,7 +435,18 @@ fn process_guess(
         } else {
             None
         };
-        return GuessResult::Response(accept_guess(db, game_id, category, target_count, name, &person, corrected_from, elapsed_ms, guess_order, false));
+        return GuessResult::Response(accept_guess(
+            db,
+            game_id,
+            category,
+            target_count,
+            name,
+            &person,
+            corrected_from,
+            elapsed_ms,
+            guess_order,
+            false,
+        ));
     }
 
     GuessResult::TryFallback
@@ -341,13 +505,27 @@ fn accept_guess(
     guess_order: i64,
     used_fallback: bool,
 ) -> ServerMessage {
-    if let Err(e) = db::insert_guess(db, game_id, name_entered, Some(&person.wikidata_id), true, elapsed_ms, guess_order) {
-        return ServerMessage::Error { message: e.to_string() };
+    if let Err(e) = db::insert_guess(
+        db,
+        game_id,
+        name_entered,
+        Some(&person.wikidata_id),
+        true,
+        elapsed_ms,
+        guess_order,
+    ) {
+        return ServerMessage::Error {
+            message: e.to_string(),
+        };
     }
 
     let accepted_count = match db::increment_accepted_count(db, game_id) {
         Ok(c) => c,
-        Err(e) => return ServerMessage::Error { message: e.to_string() },
+        Err(e) => {
+            return ServerMessage::Error {
+                message: e.to_string(),
+            };
+        }
     };
 
     let game_complete = accepted_count >= target_count;

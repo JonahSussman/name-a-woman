@@ -71,7 +71,10 @@ fn gender_qid(gender: &str) -> Option<&'static str> {
     }
 }
 
-async fn sparql_json<T: serde::de::DeserializeOwned>(client: &reqwest::Client, query: &str) -> Result<T, Box<dyn std::error::Error>> {
+async fn sparql_json<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    query: &str,
+) -> Result<T, Box<dyn std::error::Error>> {
     loop {
         let resp = client
             .post(SPARQL_ENDPOINT)
@@ -93,7 +96,10 @@ async fn sparql_json<T: serde::de::DeserializeOwned>(client: &reqwest::Client, q
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            eprintln!("SPARQL query failed with {status}: {}", &body[..body.len().min(200)]);
+            eprintln!(
+                "SPARQL query failed with {status}: {}",
+                &body[..body.len().min(200)]
+            );
 
             if status.as_u16() == 429 || status.as_u16() >= 500 {
                 eprintln!("Retrying in 60 seconds...");
@@ -167,7 +173,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let existing: i64 = conn.query_row("SELECT COUNT(*) FROM people", [], |row| row.get(0))?;
-    let existing_variants: i64 = conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
+    let existing_variants: i64 =
+        conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
     println!("DB before import: {existing} people, {existing_variants} name variants");
 
     let import_start = std::time::Instant::now();
@@ -232,10 +239,20 @@ OFFSET {offset}"#
 
         total_imported += count as u64;
         let elapsed = import_start.elapsed().as_secs();
-        let rate = if elapsed > 0 { total_imported / elapsed } else { 0 };
-        let remaining = if rate > 0 { (max_people.saturating_sub(total_imported)) / rate } else { 0 };
+        let rate = if elapsed > 0 {
+            total_imported / elapsed
+        } else {
+            0
+        };
+        let remaining = if rate > 0 {
+            (max_people.saturating_sub(total_imported)) / rate
+        } else {
+            0
+        };
         let batch_ms = batch_start.elapsed().as_millis();
-        println!("[batch {batch_num}] +{count} people ({total_imported}/{max_people}) | {elapsed}s elapsed | ~{rate}/s | ~{remaining}s remaining | batch took {batch_ms}ms");
+        println!(
+            "[batch {batch_num}] +{count} people ({total_imported}/{max_people}) | {elapsed}s elapsed | ~{rate}/s | ~{remaining}s remaining | batch took {batch_ms}ms"
+        );
 
         if total_imported >= max_people {
             println!("\nReached import limit of {max_people}.");
@@ -248,8 +265,10 @@ OFFSET {offset}"#
 
     if skip_aliases {
         println!("\n=== Skipping alias import (IMPORT_SKIP_ALIASES=1) ===");
-        let people_count: i64 = conn.query_row("SELECT COUNT(*) FROM people", [], |row| row.get(0))?;
-        let variant_count: i64 = conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
+        let people_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM people", [], |row| row.get(0))?;
+        let variant_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
         println!("DB stats: {people_count} people, {variant_count} name variants");
         return Ok(());
     }
@@ -323,7 +342,8 @@ OFFSET {alias_offset}"#
     println!("Total aliases: {total_aliases}");
 
     let people_count: i64 = conn.query_row("SELECT COUNT(*) FROM people", [], |row| row.get(0))?;
-    let variant_count: i64 = conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
+    let variant_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
     println!("DB stats: {people_count} people, {variant_count} name variants");
 
     Ok(())

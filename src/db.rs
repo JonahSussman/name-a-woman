@@ -16,25 +16,26 @@ fn backfill_fts(conn: &Connection) -> Result<()> {
     if fts_count > 0 {
         return Ok(());
     }
-    let variant_count: i64 = conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
+    let variant_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM name_variants", [], |row| row.get(0))?;
     if variant_count == 0 {
         return Ok(());
     }
     conn.execute_batch(
         "INSERT INTO name_fts (wikidata_id, name_normalized)
-         SELECT wikidata_id, name_normalized FROM name_variants"
+         SELECT wikidata_id, name_normalized FROM name_variants",
     )?;
     conn.execute_batch(
         "INSERT INTO name_fts (wikidata_id, name_normalized)
          SELECT wikidata_id, REPLACE(name_normalized, ' ', '')
          FROM name_variants
-         WHERE name_normalized LIKE '% %'"
+         WHERE name_normalized LIKE '% %'",
     )?;
     conn.execute_batch(
         "INSERT INTO name_variants (wikidata_id, name_normalized)
          SELECT wikidata_id, REPLACE(name_normalized, ' ', '')
          FROM name_variants
-         WHERE name_normalized LIKE '% %'"
+         WHERE name_normalized LIKE '% %'",
     )?;
     Ok(())
 }
@@ -105,7 +106,11 @@ pub fn lookup_exact(conn: &Connection, name: &str) -> Result<Vec<Person>> {
     rows.collect()
 }
 
-pub fn lookup_fuzzy(conn: &Connection, name: &str, max_distance: usize) -> Result<Vec<(Person, String)>> {
+pub fn lookup_fuzzy(
+    conn: &Connection,
+    name: &str,
+    max_distance: usize,
+) -> Result<Vec<(Person, String)>> {
     let normalized = normalize_name(name);
     let compact = normalized.replace(' ', "");
 
@@ -129,12 +134,22 @@ pub fn lookup_fuzzy(conn: &Connection, name: &str, max_distance: usize) -> Resul
     let window = 5.min(normalized.len());
     if candidates.is_empty() && normalized.len() > window {
         for start in 0..=normalized.len() - window {
-            fts_search(conn, &normalized[start..start + window], &mut candidates, &mut seen)?;
+            fts_search(
+                conn,
+                &normalized[start..start + window],
+                &mut candidates,
+                &mut seen,
+            )?;
         }
     }
     if candidates.is_empty() && compact != normalized && compact.len() > window {
         for start in 0..=compact.len() - window {
-            fts_search(conn, &compact[start..start + window], &mut candidates, &mut seen)?;
+            fts_search(
+                conn,
+                &compact[start..start + window],
+                &mut candidates,
+                &mut seen,
+            )?;
         }
     }
 
@@ -201,7 +216,14 @@ pub fn has_active_game(conn: &Connection, user_id: &str) -> Result<bool> {
     Ok(count > 0)
 }
 
-pub fn create_game(conn: &Connection, game_id: &str, user_id: &str, ip_hash: &str, category: &str, target_count: i64) -> Result<()> {
+pub fn create_game(
+    conn: &Connection,
+    game_id: &str,
+    user_id: &str,
+    ip_hash: &str,
+    category: &str,
+    target_count: i64,
+) -> Result<()> {
     conn.execute(
         "INSERT INTO games (id, user_id, ip_hash, category, target_count, started_at)
          VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
@@ -244,7 +266,11 @@ pub fn get_game(conn: &Connection, game_id: &str) -> Result<Option<GameRow>> {
     }
 }
 
-pub fn is_person_already_guessed(conn: &Connection, game_id: &str, wikidata_id: &str) -> Result<bool> {
+pub fn is_person_already_guessed(
+    conn: &Connection,
+    game_id: &str,
+    wikidata_id: &str,
+) -> Result<bool> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM guesses WHERE game_id = ?1 AND person_id = ?2 AND accepted = 1",
         params![game_id, wikidata_id],
@@ -253,7 +279,15 @@ pub fn is_person_already_guessed(conn: &Connection, game_id: &str, wikidata_id: 
     Ok(count > 0)
 }
 
-pub fn insert_guess(conn: &Connection, game_id: &str, name_entered: &str, person_id: Option<&str>, accepted: bool, guess_time_ms: i64, guess_order: i64) -> Result<()> {
+pub fn insert_guess(
+    conn: &Connection,
+    game_id: &str,
+    name_entered: &str,
+    person_id: Option<&str>,
+    accepted: bool,
+    guess_time_ms: i64,
+    guess_order: i64,
+) -> Result<()> {
     conn.execute(
         "INSERT INTO guesses (game_id, name_entered, person_id, accepted, guess_time_ms, guess_order)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -312,7 +346,12 @@ pub fn complete_game(conn: &Connection, game_id: &str) -> Result<i64> {
     Ok(time_ms)
 }
 
-pub fn get_rank(conn: &Connection, game_id: &str, category: &str, target_count: i64) -> Result<CompletionData> {
+pub fn get_rank(
+    conn: &Connection,
+    game_id: &str,
+    category: &str,
+    target_count: i64,
+) -> Result<CompletionData> {
     let total_time_ms: i64 = conn.query_row(
         "SELECT total_time_ms FROM games WHERE id = ?1",
         params![game_id],
@@ -349,10 +388,20 @@ pub fn get_rank(conn: &Connection, game_id: &str, category: &str, target_count: 
 }
 
 fn leaderboard_row(row: &rusqlite::Row) -> Result<(String, String, i64, i64, String)> {
-    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+    ))
 }
 
-fn to_leaderboard_entry(rank: i64, t: (String, String, i64, i64, String), is_you: bool) -> LeaderboardEntry {
+fn to_leaderboard_entry(
+    rank: i64,
+    t: (String, String, i64, i64, String),
+    is_you: bool,
+) -> LeaderboardEntry {
     LeaderboardEntry {
         rank,
         game_id: t.0,
@@ -364,7 +413,12 @@ fn to_leaderboard_entry(rank: i64, t: (String, String, i64, i64, String), is_you
     }
 }
 
-pub fn get_leaderboard_top(conn: &Connection, category: &str, target_count: i64, limit: i64) -> Result<Vec<LeaderboardEntry>> {
+pub fn get_leaderboard_top(
+    conn: &Connection,
+    category: &str,
+    target_count: i64,
+    limit: i64,
+) -> Result<Vec<LeaderboardEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, total_time_ms, accepted_count, category
          FROM games
@@ -372,15 +426,23 @@ pub fn get_leaderboard_top(conn: &Connection, category: &str, target_count: i64,
          ORDER BY total_time_ms ASC
          LIMIT ?3",
     )?;
-    let rows: Vec<_> = stmt.query_map(params![category, target_count, limit], leaderboard_row)?
+    let rows: Vec<_> = stmt
+        .query_map(params![category, target_count, limit], leaderboard_row)?
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(rows.into_iter().enumerate()
+    Ok(rows
+        .into_iter()
+        .enumerate()
         .map(|(i, t)| to_leaderboard_entry((i + 1) as i64, t, false))
         .collect())
 }
 
-pub fn get_leaderboard_bottom(conn: &Connection, category: &str, target_count: i64, limit: i64) -> Result<Vec<LeaderboardEntry>> {
+pub fn get_leaderboard_bottom(
+    conn: &Connection,
+    category: &str,
+    target_count: i64,
+    limit: i64,
+) -> Result<Vec<LeaderboardEntry>> {
     let total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM games WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL",
         params![category, target_count],
@@ -394,16 +456,26 @@ pub fn get_leaderboard_bottom(conn: &Connection, category: &str, target_count: i
          ORDER BY total_time_ms DESC
          LIMIT ?3",
     )?;
-    let rows: Vec<_> = stmt.query_map(params![category, target_count, limit], leaderboard_row)?
+    let rows: Vec<_> = stmt
+        .query_map(params![category, target_count, limit], leaderboard_row)?
         .collect::<Result<Vec<_>>>()?;
 
     let start_rank = total - rows.len() as i64 + 1;
-    Ok(rows.into_iter().rev().enumerate()
+    Ok(rows
+        .into_iter()
+        .rev()
+        .enumerate()
         .map(|(i, t)| to_leaderboard_entry(start_rank + i as i64, t, false))
         .collect())
 }
 
-pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target_count: i64, range: i64) -> Result<Option<Neighborhood>> {
+pub fn get_neighborhood(
+    conn: &Connection,
+    game_id: &str,
+    category: &str,
+    target_count: i64,
+    range: i64,
+) -> Result<Option<Neighborhood>> {
     let game = match get_game(conn, game_id)? {
         Some(g) if g.completed_at.is_some() => g,
         _ => return Ok(None),
@@ -421,11 +493,18 @@ pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target
          ORDER BY total_time_ms DESC
          LIMIT ?5",
     )?;
-    let above_rows: Vec<_> = above_stmt.query_map(params![category, target_count, total_time_ms, game_id, range], leaderboard_row)?
+    let above_rows: Vec<_> = above_stmt
+        .query_map(
+            params![category, target_count, total_time_ms, game_id, range],
+            leaderboard_row,
+        )?
         .collect::<Result<Vec<_>>>()?;
 
     let above_start = my_rank - above_rows.len() as i64;
-    let above: Vec<_> = above_rows.into_iter().rev().enumerate()
+    let above: Vec<_> = above_rows
+        .into_iter()
+        .rev()
+        .enumerate()
         .map(|(i, t)| to_leaderboard_entry(above_start + i as i64, t, false))
         .collect();
 
@@ -447,17 +526,29 @@ pub fn get_neighborhood(conn: &Connection, game_id: &str, category: &str, target
          ORDER BY total_time_ms ASC
          LIMIT ?5",
     )?;
-    let below: Vec<_> = below_stmt.query_map(params![category, target_count, total_time_ms, game_id, range], leaderboard_row)?
+    let below: Vec<_> = below_stmt
+        .query_map(
+            params![category, target_count, total_time_ms, game_id, range],
+            leaderboard_row,
+        )?
         .collect::<Result<Vec<_>>>()?;
 
-    let below: Vec<_> = below.into_iter().enumerate()
+    let below: Vec<_> = below
+        .into_iter()
+        .enumerate()
         .map(|(i, t)| to_leaderboard_entry(my_rank + i as i64 + 1, t, false))
         .collect();
 
     Ok(Some(Neighborhood { above, you, below }))
 }
 
-pub fn get_paginated_leaderboard(conn: &Connection, category: &str, target_count: i64, page: i64, per_page: i64) -> Result<PaginatedLeaderboard> {
+pub fn get_paginated_leaderboard(
+    conn: &Connection,
+    category: &str,
+    target_count: i64,
+    page: i64,
+    per_page: i64,
+) -> Result<PaginatedLeaderboard> {
     let total_entries: i64 = conn.query_row(
         "SELECT COUNT(*) FROM games WHERE category = ?1 AND target_count = ?2 AND completed_at IS NOT NULL AND total_time_ms IS NOT NULL",
         params![category, target_count],
@@ -473,10 +564,16 @@ pub fn get_paginated_leaderboard(conn: &Connection, category: &str, target_count
          ORDER BY total_time_ms ASC
          LIMIT ?3 OFFSET ?4",
     )?;
-    let entries: Vec<_> = stmt.query_map(params![category, target_count, per_page, offset], leaderboard_row)?
+    let entries: Vec<_> = stmt
+        .query_map(
+            params![category, target_count, per_page, offset],
+            leaderboard_row,
+        )?
         .collect::<Result<Vec<_>>>()?;
 
-    let entries: Vec<_> = entries.into_iter().enumerate()
+    let entries: Vec<_> = entries
+        .into_iter()
+        .enumerate()
         .map(|(i, t)| to_leaderboard_entry(offset + i as i64 + 1, t, false))
         .collect();
 
