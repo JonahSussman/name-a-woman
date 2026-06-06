@@ -1,11 +1,13 @@
 {
   "compilerOptions": {
-    "checkJs": true,
     "noEmit": true,
     "strict": true,
     "noImplicitThis": false,
     "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "bundler",
     "lib": ["ES2020", "DOM"]
   },
-  "include": ["static/**/*.js", "static/**/*.d.ts"]
+  "include": ["**/*.d.ts", "**/*.ts"],
+  "exclude": ["node_modules"]
 }

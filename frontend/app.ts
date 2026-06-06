@@ -1,90 +1,51 @@
-/** @typedef {'setup'|'playing'|'completed'|'timed_out'|'results'|'leaderboard'} GameState */
-/** @typedef {'women'|'men'|'people'} Category */
+import type {
+  Category,
+  CompletionData,
+  ServerMessage,
+  GameStatsResponse,
+  GuessSummary,
+  LeaderboardResponse,
+} from "./types.gen";
 
-/**
- * @typedef {{
- *   wikidata_id: string,
- *   display_name: string,
- *   gender: string,
- *   wikipedia_url: string|null,
- *   wikidata_url: string
- * }} Person
- *
- * @typedef {{
- *   total_time_ms: number,
- *   rank: number,
- *   total_players: number,
- *   percentile: number
- * }} CompletionData
- *
- * @typedef {{
- *   order: number,
- *   displayName: string,
- *   url: string,
- *   typed: string,
- *   corrected: boolean,
- *   usedFallback: boolean,
- *   timeMs: number
- * }} AcceptedGuess
- *
- * @typedef {{
- *   type: string,
- *   game_id?: string,
- *   max_fallbacks?: number,
- *   person?: Person,
- *   used_fallback?: boolean,
- *   corrected_from?: string,
- *   accepted_count?: number,
- *   game_complete?: boolean,
- *   completion?: CompletionData,
- *   fallback_exhausted?: boolean,
- *   message?: string
- * }} ServerMessage
- *
- * @typedef {{
- *   game: { category: string, target_count: number, accepted_count: number, total_time_ms: number },
- *   guesses: Array<{ order: number, display_name: string, guess_time_ms: number, wikipedia_url: string|null, wikidata_url: string }>,
- *   ranking: CompletionData|null
- * }} GameStats
- *
- * @typedef {{
- *   rank: number, game_id: string, user_id: string, total_time_ms: number,
- *   accepted_count: number, category: string, is_you: boolean
- * }} LeaderboardEntry
- *
- * @typedef {{
- *   entries: LeaderboardEntry[],
- *   page: number,
- *   total_pages: number,
- *   total_entries: number
- * }} PaginatedLeaderboard
- *
- * @typedef {{
- *   above: LeaderboardEntry[],
- *   you: LeaderboardEntry,
- *   below: LeaderboardEntry[]
- * }} Neighborhood
- *
- * @typedef {{
- *   top_10: LeaderboardEntry[],
- *   bottom_10: LeaderboardEntry[],
- *   your_neighborhood?: Neighborhood,
- *   full_leaderboard?: PaginatedLeaderboard
- * }} LeaderboardResponse
- */
+type GameState =
+  | "setup"
+  | "playing"
+  | "completed"
+  | "timed_out"
+  | "results"
+  | "leaderboard";
 
-const CATEGORIES = /** @type {Category[]} */ (["women", "men", "people"]);
+interface AcceptedGuess {
+  order: number;
+  displayName: string;
+  url: string;
+  typed: string;
+  corrected: boolean;
+  usedFallback: boolean;
+  timeMs: number;
+}
+
+const CATEGORIES: Category[] = ["women", "men", "people"];
 const COUNTS = [10, 100, 1000];
-const CATEGORY_COLORS = { women: "#e91e8a", men: "#1e90ff", people: "#333" };
+const CATEGORY_COLORS: Record<Category, string> = {
+  women: "#e91e8a",
+  men: "#1e90ff",
+  people: "#333",
+};
 const INACTIVITY_TIMEOUT = 300_000;
 const BASE_PATH = location.pathname.replace(/\/$/, "");
 
-/** @type {any} */
-let _chart = null;
+let _chart: any = null;
 
-function getUserId() {
+const MAX_USER_ID_LEN = 36;
+
+function isValidUserId(id: string): boolean {
+  return id.length >= 3 && id.length <= MAX_USER_ID_LEN && /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
+function getUserId(): string {
   let id = localStorage.getItem("naw_user_id");
-  if (!id) {
+  if (!id || !isValidUserId(id)) {
     id = crypto.randomUUID();
     localStorage.setItem("naw_user_id", id);
   }
@@ -96,35 +57,25 @@ function Game() {
   const userId = getUserId();
 
   return {
-    /** @type {GameState} */
-    state: "setup",
-    /** @type {Category} */
-    category: "women",
+    state: "setup" as GameState,
+    category: "women" as Category,
     targetCount: 100,
     currentGuess: "",
-    /** @type {AcceptedGuess[]} */
-    acceptedGuesses: [],
+    acceptedGuesses: [] as AcceptedGuess[],
     acceptedCount: 0,
-    /** @type {string|null} */
-    gameId: null,
+    gameId: null as string | null,
     userId,
-    /** @type {WebSocket|null} */
-    ws: null,
+    ws: null as WebSocket | null,
 
-    /** @type {number|null} */
-    startTime: null,
+    startTime: null as number | null,
     elapsed: 0,
     inactivityRemaining: INACTIVITY_TIMEOUT,
-    /** @type {number|null} */
-    lastCorrectTime: null,
-    /** @type {number|null} */
-    timerFrame: null,
-    /** @type {number|null} */
-    pausedAt: null,
+    lastCorrectTime: null as number | null,
+    timerFrame: null as number | null,
+    pausedAt: null as number | null,
     pausedElapsed: 0,
 
-    /** @type {CompletionData|null} */
-    completion: null,
+    completion: null as CompletionData | null,
 
     fallbacksUsed: 0,
     fallbacksMax: 0,
@@ -135,48 +86,91 @@ function Game() {
     feedbackMsg: "",
     feedbackClass: "",
 
-    /** @type {LeaderboardResponse|null} */
-    leaderboard: null,
-    /** @type {GameStats|null} */
-    gameStats: null,
-    /** @type {number|null} */
-    leaderboardPage: null,
+    leaderboard: null as LeaderboardResponse | null,
+    gameStats: null as GameStatsResponse | null,
+    leaderboardPage: null as number | null,
     leaderboardGoTo: "",
     shareMsg: "",
+    editingUserId: false,
+    userIdDraft: "",
+    userIdError: "",
 
-    get categoryColor() {
-      return CATEGORY_COLORS[this.category];
+    get categoryColor(): string {
+      return CATEGORY_COLORS[this.category as Category];
     },
 
-    get titleClickable() {
+    get titleClickable(): boolean {
       return this.state === "setup" || this.state === "leaderboard";
     },
 
-    /** @param {string} id */
-    shortId(id) {
-      return id ? id.slice(0, 8) : "";
-    },
-
-    /** @param {string} gameId */
-    gameUrl(gameId) {
+    gameUrl(gameId: string): string {
       return `${location.origin}${location.pathname}?game_id=${gameId}`;
     },
 
-    get hasCorrections() {
-      return this.acceptedGuesses.some((g) => g.corrected);
+    startEditUserId() {
+      this.userIdDraft = this.userId;
+      this.userIdError = "";
+      this.editingUserId = true;
+      (this as any).$nextTick(() => {
+        const input = document.getElementById("user-id-input") as HTMLInputElement | null;
+        if (input) { input.focus(); input.select(); }
+      });
     },
 
-    get hasFallbacks() {
+    async confirmUserId() {
+      const draft = this.userIdDraft.trim();
+      if (draft.length < 3) {
+        this.userIdError = "At least 3 characters";
+        return;
+      }
+      if (draft.length > MAX_USER_ID_LEN) {
+        this.userIdError = `Max ${MAX_USER_ID_LEN} characters`;
+        return;
+      }
+      if (!/^[a-zA-Z0-9_-]+$/.test(draft)) {
+        this.userIdError = "Only letters, numbers, hyphens, underscores";
+        return;
+      }
+      try {
+        const res = await fetch(`${BASE_PATH}/api/validate-user-id`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: draft }),
+        });
+        if (!res.ok) {
+          this.userIdError = "Could not validate ID";
+          return;
+        }
+      } catch {
+        this.userIdError = "Could not validate ID";
+        return;
+      }
+      this.userId = draft;
+      localStorage.setItem("naw_user_id", draft);
+      document.cookie = `naw_session=${draft}; path=/; max-age=31536000; SameSite=Lax`;
+      this.editingUserId = false;
+      this.userIdError = "";
+    },
+
+    cancelEditUserId() {
+      this.editingUserId = false;
+      this.userIdError = "";
+    },
+
+    get hasCorrections(): boolean {
+      return this.acceptedGuesses.some((g: AcceptedGuess) => g.corrected);
+    },
+
+    get hasFallbacks(): boolean {
       return this.fallbacksUsed > 0;
     },
 
-    get paginationPages() {
+    get paginationPages(): (number | null)[] {
       const fl = this.leaderboard?.full_leaderboard;
       if (!fl || fl.total_pages <= 1) return [];
       const cur = fl.page;
       const total = fl.total_pages;
-      /** @type {Set<number>} */
-      const pages = new Set();
+      const pages = new Set<number>();
       pages.add(1);
       pages.add(total);
       for (
@@ -187,8 +181,7 @@ function Game() {
         pages.add(i);
       }
       const sorted = [...pages].sort((a, b) => a - b);
-      /** @type {(number|null)[]} */
-      const result = [];
+      const result: (number | null)[] = [];
       for (let i = 0; i < sorted.length; i++) {
         if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
           result.push(null);
@@ -198,7 +191,8 @@ function Game() {
       return result;
     },
 
-    mounted() {
+    async mounted() {
+      await this.validateStoredUserId();
       const params = new URLSearchParams(window.location.search);
       const gameId = params.get("game_id");
       if (gameId) {
@@ -206,8 +200,25 @@ function Game() {
       }
     },
 
-    /** @param {string} gameId */
-    async loadSharedResults(gameId) {
+    async validateStoredUserId() {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/validate-user-id`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: this.userId }),
+        });
+        if (!res.ok) {
+          const newId = crypto.randomUUID();
+          this.userId = newId;
+          localStorage.setItem("naw_user_id", newId);
+          document.cookie = `naw_session=${newId}; path=/; max-age=31536000; SameSite=Lax`;
+        }
+      } catch {
+        // offline — trust client-side check
+      }
+    },
+
+    async loadSharedResults(gameId: string) {
       this.state = "results";
       this.gameId = gameId;
       try {
@@ -217,7 +228,7 @@ function Game() {
           return;
         }
         this.gameStats = await statsRes.json();
-        this.category = /** @type {Category} */ (this.gameStats?.game.category);
+        this.category = this.gameStats?.game.category as Category;
         this.targetCount = this.gameStats?.game.target_count ?? 100;
         this.completion = this.gameStats?.ranking ?? null;
 
@@ -227,7 +238,7 @@ function Game() {
         if (lbRes.ok) {
           this.leaderboard = await lbRes.json();
         }
-        /** @type {any} */ (this).$nextTick(() => this.renderChart());
+        (this as any).$nextTick(() => this.renderChart());
       } catch {
         this.state = "setup";
       }
@@ -249,8 +260,7 @@ function Game() {
       }
     },
 
-    /** @param {number} page */
-    async loadLeaderboardPage(page) {
+    async loadLeaderboardPage(page: number) {
       if (page < 1) return;
       const fl = this.leaderboard?.full_leaderboard;
       if (fl && page > fl.total_pages) return;
@@ -319,9 +329,8 @@ function Game() {
         );
       };
 
-      this.ws.onmessage = (e) => {
-        /** @type {ServerMessage} */
-        const msg = JSON.parse(e.data);
+      this.ws.onmessage = (e: MessageEvent) => {
+        const msg: ServerMessage = JSON.parse(e.data);
         this.handleMessage(msg);
       };
 
@@ -353,8 +362,7 @@ function Game() {
       this.ws.send(JSON.stringify({ action: "guess", name }));
     },
 
-    /** @param {ServerMessage} msg */
-    handleMessage(msg) {
+    handleMessage(msg: ServerMessage) {
       this.guessPending = false;
       if (this.pausedAt) {
         const pauseDuration = Date.now() - this.pausedAt;
@@ -364,9 +372,9 @@ function Game() {
       }
       this.clearFeedback();
       setTimeout(() => {
-        const input = /** @type {HTMLInputElement|null} */ (
-          document.querySelector(".input-area input")
-        );
+        const input = document.querySelector(
+          ".input-area input",
+        ) as HTMLInputElement | null;
         if (input) input.focus();
       });
 
@@ -411,13 +419,19 @@ function Game() {
           this.flashWarn();
           break;
 
-        case "wrong_category":
+        case "wrong_category": {
+          const genderFor: Record<Category, string> = {
+            women: "female",
+            men: "male",
+            people: "other",
+          };
           this.showFeedback(
-            `${msg.person?.display_name} is ${msg.person?.gender} in Wikidata, not ${this.category}`,
+            `${msg.person?.display_name} is "${msg.person?.gender}" in Wikidata, not "${genderFor[this.category as Category]}"`,
             "warn",
           );
           this.flashWarn();
           break;
+        }
 
         case "not_found":
           if (msg.fallback_exhausted) {
@@ -451,16 +465,16 @@ function Game() {
         ]);
         if (lbRes.ok) this.leaderboard = await lbRes.json();
         if (statsRes.ok) this.gameStats = await statsRes.json();
-        /** @type {any} */ (this).$nextTick(() => this.renderChart());
+        (this as any).$nextTick(() => this.renderChart());
       } catch {
         // silently fail
       }
     },
 
     renderChart() {
-      const canvas = /** @type {HTMLCanvasElement|null} */ (
-        document.getElementById("pace-chart")
-      );
+      const canvas = document.getElementById(
+        "pace-chart",
+      ) as HTMLCanvasElement | null;
       if (!canvas) return;
 
       const guesses = this.gameStats?.guesses;
@@ -471,8 +485,8 @@ function Game() {
         _chart = null;
       }
 
-      const labels = guesses.map((g) => g.order);
-      const data = guesses.map((g) => g.guess_time_ms / 1000);
+      const labels = guesses.map((g: GuessSummary) => g.order);
+      const data = guesses.map((g: GuessSummary) => g.guess_time_ms / 1000);
 
       _chart = new Chart(canvas, {
         type: "line",
@@ -482,7 +496,7 @@ function Game() {
             {
               label: "Time (s)",
               data,
-              borderColor: CATEGORY_COLORS[this.category] || "#333",
+              borderColor: CATEGORY_COLORS[this.category as Category] || "#333",
               backgroundColor: "transparent",
               tension: 0.2,
               pointRadius: guesses.length > 50 ? 0 : 3,
@@ -504,7 +518,7 @@ function Game() {
             legend: { display: false },
             tooltip: {
               callbacks: {
-                label: (/** @type {any} */ ctx) => {
+                label: (ctx: any) => {
                   const g = guesses[ctx.dataIndex];
                   return `${g.display_name} — ${this.formatTime(g.guess_time_ms)}`;
                 },
@@ -517,7 +531,11 @@ function Game() {
 
     celebrate() {
       const end = Date.now() + 2000;
-      const colors = [CATEGORY_COLORS[this.category], "#ffd700", "#ffffff"];
+      const colors = [
+        CATEGORY_COLORS[this.category as Category],
+        "#ffd700",
+        "#ffffff",
+      ];
       const frame = () => {
         confetti({
           particleCount: 3,
@@ -583,8 +601,7 @@ function Game() {
       }
     },
 
-    /** @param {number} ms */
-    formatTime(ms) {
+    formatTime(ms: number): string {
       const totalSeconds = Math.floor(ms / 1000);
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
@@ -592,8 +609,7 @@ function Game() {
       return `${minutes}:${String(seconds).padStart(2, "0")}.${String(centis).padStart(2, "0")}`;
     },
 
-    /** @param {number} ms */
-    formatCountdown(ms) {
+    formatCountdown(ms: number): string {
       const totalSeconds = Math.ceil(ms / 1000);
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
@@ -614,8 +630,7 @@ function Game() {
       }, 400);
     },
 
-    /** @param {string} msg @param {string} cls */
-    showFeedback(msg, cls) {
+    showFeedback(msg: string, cls: string) {
       this.feedbackMsg = msg;
       this.feedbackClass = cls;
     },
@@ -657,3 +672,5 @@ function Game() {
     },
   };
 }
+
+(window as any).Game = Game;

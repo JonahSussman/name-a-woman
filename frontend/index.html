@@ -24,7 +24,23 @@
     </h1>
 
     <!-- User ID badge -->
-    <div class="user-badge" v-if="state === 'setup'">user id: {{ shortId(userId) }}</div>
+    <div class="user-badge" v-if="state === 'setup'">
+      <span v-show="!editingUserId" class="user-id-clickable" @click="startEditUserId">user id: {{ userId }}</span>
+      <div v-show="editingUserId">
+        user id: <input
+          id="user-id-input"
+          class="user-id-edit"
+          v-model="userIdDraft"
+          @keydown.enter="confirmUserId"
+          @keydown.escape="cancelEditUserId"
+          @blur="confirmUserId"
+          :maxlength="36"
+          :size="Math.max(userIdDraft.length, 1)"
+          spellcheck="false"
+        >
+        <div v-show="userIdError" class="user-id-error">{{ userIdError }}</div>
+      </div>
+    </div>
 
     <!-- Setup -->
     <div v-if="state === 'setup'">
@@ -117,15 +133,15 @@
             <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
             <tbody>
               <tr v-for="e in leaderboard.your_neighborhood.above" :key="'a'+e.rank">
-                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ e.user_id }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
               </tr>
               <tr class="you-row">
                 <td>{{ leaderboard.your_neighborhood.you.rank }}</td>
-                <td><a :href="gameUrl(leaderboard.your_neighborhood.you.game_id)">{{ shortId(leaderboard.your_neighborhood.you.user_id) }}</a></td>
+                <td><a :href="gameUrl(leaderboard.your_neighborhood.you.game_id)">{{ leaderboard.your_neighborhood.you.user_id }}</a></td>
                 <td>{{ formatTime(leaderboard.your_neighborhood.you.total_time_ms) }}</td>
               </tr>
               <tr v-for="e in leaderboard.your_neighborhood.below" :key="'b'+e.rank">
-                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ e.user_id }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
               </tr>
             </tbody>
           </table>
@@ -139,7 +155,7 @@
             <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
             <tbody>
               <tr v-for="e in leaderboard.full_leaderboard.entries" :key="'f'+e.rank" :class="{ 'you-row': e.is_you }">
-                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ e.user_id }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
               </tr>
             </tbody>
           </table>
@@ -219,15 +235,15 @@
             <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
             <tbody>
               <tr v-for="e in leaderboard.your_neighborhood.above" :key="'ra'+e.rank">
-                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ e.user_id }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
               </tr>
               <tr class="you-row">
                 <td>{{ leaderboard.your_neighborhood.you.rank }}</td>
-                <td><a :href="gameUrl(leaderboard.your_neighborhood.you.game_id)">{{ shortId(leaderboard.your_neighborhood.you.user_id) }}</a></td>
+                <td><a :href="gameUrl(leaderboard.your_neighborhood.you.game_id)">{{ leaderboard.your_neighborhood.you.user_id }}</a></td>
                 <td>{{ formatTime(leaderboard.your_neighborhood.you.total_time_ms) }}</td>
               </tr>
               <tr v-for="e in leaderboard.your_neighborhood.below" :key="'rb'+e.rank">
-                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ e.user_id }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
               </tr>
             </tbody>
           </table>
@@ -241,7 +257,7 @@
             <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
             <tbody>
               <tr v-for="e in leaderboard.full_leaderboard.entries" :key="'rf'+e.rank" :class="{ 'you-row': e.is_you }">
-                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ e.user_id }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
               </tr>
             </tbody>
           </table>
@@ -277,7 +293,7 @@
             <thead><tr><th>#</th><th>Player</th><th>Time</th></tr></thead>
             <tbody>
               <tr v-for="e in leaderboard.full_leaderboard.entries" :key="'lf'+e.rank" :class="{ 'you-row': e.is_you }">
-                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ shortId(e.user_id) }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
+                <td>{{ e.rank }}</td><td><a :href="gameUrl(e.game_id)">{{ e.user_id }}</a></td><td>{{ formatTime(e.total_time_ms) }}</td>
               </tr>
             </tbody>
           </table>
@@ -305,8 +321,25 @@
 
 <footer class="site-footer">
   <div>2026 | Made with 💖 by <a href="https://jonahsussman.net" target="_blank" rel="noopener">Jonah Sussman</a></div>
-  <div><a href="https://ko-fi.com/jonahsussman" target="_blank" rel="noopener">Support me on Ko-fi!</a></div>
+  <div>
+    <a href="https://ko-fi.com/jonahsussman" target="_blank" rel="noopener">Support me on Ko-fi!</a>
+    &middot;
+    <a href="#" onclick="document.getElementById('privacy-modal').showModal(); return false;">Privacy</a>
+  </div>
 </footer>
+
+<dialog id="privacy-modal" class="privacy-modal" onclick="if(event.target===this)this.close()">
+  <div class="privacy-content">
+    <h2>What data am I collecting?</h2>
+    <ul>
+      <li><strong>User ID</strong> - A random identifier (or a name you choose) stored in your browser (localStorage and a cookie). This is not linked to your real identity; it only ties your games together so the leaderboard can show your rank. Custom IDs are validated server-side to filter inappropriate content.</li>
+      <li><strong>IP hash</strong> - A one-way hash of your IP address. We never store your actual IP. The hash is used solely to detect abuse.</li>
+      <li><strong>Game data</strong> - Your guesses, response times, and chosen category/count. This powers the leaderboard, stats screen, and pace chart.</li>
+    </ul>
+    <p>No data is sold or shared with third parties. Everything is stored in a local SQLite database on the server.</p>
+    <button onclick="this.closest('dialog').close()">Close</button>
+  </div>
+</dialog>
 
 </body>
 </html>

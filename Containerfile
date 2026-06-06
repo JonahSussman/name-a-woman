@@ -1,17 +1,8 @@
-FROM registry.access.redhat.com/ubi10/ubi-minimal AS frontend
-RUN microdnf install -y nodejs npm && microdnf clean all
-WORKDIR /app
-COPY static/ static/
-RUN npm install -g esbuild html-minifier-terser \
-    && esbuild static/app.js --minify --outfile=static/app.js --allow-overwrite \
-    && esbuild static/style.css --minify --outfile=static/style.css --allow-overwrite \
-    && html-minifier-terser --collapse-whitespace --remove-comments --minify-css --minify-js \
-       -o static/index.min.html static/index.html \
-    && mv static/index.min.html static/index.html
-
 FROM registry.access.redhat.com/ubi10/ubi-minimal AS builder
-RUN microdnf install -y rust-toolset && microdnf clean all
+RUN microdnf install -y rust-toolset nodejs npm make && microdnf clean all
 WORKDIR /app
+
+# Cache Rust dependencies
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src/bin \
     && echo "fn main() {}" > src/main.rs \
@@ -21,14 +12,20 @@ RUN mkdir -p src/bin \
     && for m in config db game handlers models normalize session wikidata; do touch src/$m.rs; done \
     && cargo build --release \
     && rm -rf src target/release/name-a-woman target/release/deps/*name_a_woman*
+
+# Install frontend dependencies
+COPY frontend/package.json frontend/package-lock.json frontend/
+RUN cd frontend && npm ci
+
+# Build everything
 COPY src/ src/
-COPY schema.sql .
-RUN cargo build --release --bin name-a-woman
+COPY frontend/ frontend/
+COPY Makefile .
+RUN make release
 
 FROM registry.access.redhat.com/ubi10/ubi-minimal
 COPY --from=builder /app/target/release/name-a-woman /usr/local/bin/
-COPY --from=frontend /app/static/ /app/static/
-COPY schema.sql /app/
+COPY --from=builder /app/static/ /app/static/
 WORKDIR /app
 ENV RUST_LOG=info
 ENV NAW_DB_PATH=data/names.db

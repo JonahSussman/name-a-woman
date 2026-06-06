@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 use tokio::sync::Mutex;
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
@@ -33,7 +33,8 @@ async fn main() {
         .route("/game/ws", get(game::ws_handler))
         .route("/leaderboard", get(handlers::leaderboard))
         .route("/stats/game/{id}", get(handlers::game_stats))
-        .route("/health", get(handlers::health));
+        .route("/health", get(handlers::health))
+        .route("/validate-user-id", post(handlers::validate_user_id));
 
     let app = Router::new()
         .nest("/api", api)

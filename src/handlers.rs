@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use crate::AppState;
 use crate::db;
 use crate::models::*;
+use crate::session;
 
 pub async fn health() -> StatusCode {
     StatusCode::OK
@@ -84,17 +85,32 @@ pub async fn game_stats(
         None
     };
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "game": {
-                "total_time_ms": game.total_time_ms,
-                "category": game.category,
-                "target_count": game.target_count,
-                "accepted_count": game.accepted_count,
-            },
-            "guesses": guesses,
-            "ranking": ranking,
-        })),
-    )
+    let response = GameStatsResponse {
+        game: GameSummary {
+            total_time_ms: game.total_time_ms,
+            category: game.category,
+            target_count: game.target_count,
+            accepted_count: game.accepted_count,
+        },
+        guesses,
+        ranking,
+    };
+
+    (StatusCode::OK, Json(serde_json::to_value(response).unwrap()))
+}
+
+#[derive(Debug, serde::Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "frontend/types.gen.ts")]
+pub struct ValidateUserIdRequest {
+    pub user_id: String,
+}
+
+pub async fn validate_user_id(
+    Json(body): Json<ValidateUserIdRequest>,
+) -> StatusCode {
+    if session::is_valid_user_id(&body.user_id) {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    }
 }

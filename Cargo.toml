@@ -30,6 +30,8 @@ chrono = { version = "0.4", features = ["serde"] }
 strsim = "0.11"
 urlencoding = "2"
 async-trait = "0.1"
+ts-rs = { version = "12", features = ["serde-compat"] }
+rustrict = "0.7"
 
 [dev-dependencies]
 tokio-tungstenite = "0.26"

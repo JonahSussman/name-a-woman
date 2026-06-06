@@ -31,7 +31,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     let version = get_schema_version(conn);
 
     if version < 1 {
-        conn.execute_batch(include_str!("../schema.sql"))?;
+        conn.execute_batch(include_str!("schema.sql"))?;
         backfill_fts(conn)?;
         set_schema_version(conn, 1)?;
     }

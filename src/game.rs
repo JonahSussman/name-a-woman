@@ -7,6 +7,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, timeout};
+use ts_rs::TS;
 
 use crate::AppState;
 use crate::db;
@@ -14,7 +15,8 @@ use crate::models::*;
 use crate::normalize::normalize_name;
 use crate::session;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
+#[ts(export, export_to = "frontend/types.gen.ts")]
 #[serde(tag = "action")]
 enum ClientMessage {
     #[serde(rename = "start")]
@@ -27,11 +29,15 @@ enum ClientMessage {
     Guess { name: String },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "frontend/types.gen.ts")]
 #[serde(tag = "type")]
 enum ServerMessage {
     #[serde(rename = "started")]
-    Started { game_id: String, max_fallbacks: i64 },
+    Started {
+        game_id: String,
+        max_fallbacks: i64,
+    },
 
     #[serde(rename = "accepted")]
     Accepted {
@@ -59,7 +65,9 @@ enum ServerMessage {
     },
 
     #[serde(rename = "game_timeout")]
-    GameTimeout { elapsed_ms: u64 },
+    GameTimeout {
+        elapsed_ms: u64,
+    },
 
     #[serde(rename = "error")]
     Error { message: String },

@@ -1,5 +1,16 @@
 use axum::http::HeaderMap;
+use rustrict::CensorStr;
 use sha2::{Digest, Sha256};
+
+const MAX_USER_ID_LEN: usize = 36;
+
+pub fn is_valid_user_id(id: &str) -> bool {
+    id.len() >= 3
+        && id.len() <= MAX_USER_ID_LEN
+        && id.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !id.is_inappropriate()
+}
 
 pub fn get_or_create_session_id(headers: &HeaderMap) -> (String, bool) {
     if let Some(cookie) = headers.get("cookie") {
@@ -7,7 +18,9 @@ pub fn get_or_create_session_id(headers: &HeaderMap) -> (String, bool) {
             for part in cookie_str.split(';') {
                 let part = part.trim();
                 if let Some(value) = part.strip_prefix("naw_session=") {
-                    return (value.to_string(), false);
+                    if is_valid_user_id(value) {
+                        return (value.to_string(), false);
+                    }
                 }
             }
         }

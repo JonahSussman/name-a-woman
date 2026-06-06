@@ -2,4 +2,6 @@
 /data/*.db
 /data/*.db-wal
 /data/*.db-shm
-node_modules/
+frontend/node_modules/
+frontend/types.gen.ts
+static/
