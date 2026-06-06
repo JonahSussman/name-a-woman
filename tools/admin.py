@@ -107,7 +107,8 @@ def cmd_leaderboard(conn, args):
     rows = conn.execute(
         "SELECT user_id, total_time_ms, accepted_count, id "
         "FROM games "
-        "WHERE completed_at IS NOT NULL AND category = ? AND target_count = ? "
+        "WHERE completed_at IS NOT NULL AND total_time_ms IS NOT NULL "
+        "AND category = ? AND target_count = ? "
         "ORDER BY total_time_ms ASC LIMIT ?",
         (args.category, args.count, args.limit),
     ).fetchall()
