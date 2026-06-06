@@ -133,6 +133,27 @@ def cmd_rename_user(conn, args):
     print(f"Renamed {count} games from {args.old_id} to {args.new_id}.")
 
 
+def cmd_clean(conn, args):
+    count = conn.execute(
+        "SELECT COUNT(*) FROM games WHERE completed_at IS NOT NULL AND total_time_ms IS NULL"
+    ).fetchone()[0]
+    if count == 0:
+        print("No abandoned games to clean.")
+        return
+    if not args.yes:
+        resp = input(f"Delete {count} abandoned games and their guesses? [y/N] ")
+        if resp.lower() != "y":
+            print("Aborted.")
+            return
+    conn.execute(
+        "DELETE FROM guesses WHERE game_id IN "
+        "(SELECT id FROM games WHERE completed_at IS NOT NULL AND total_time_ms IS NULL)"
+    )
+    conn.execute("DELETE FROM games WHERE completed_at IS NOT NULL AND total_time_ms IS NULL")
+    conn.commit()
+    print(f"Deleted {count} abandoned games.")
+
+
 def cmd_stats(conn, args):
     total_games = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
     completed = conn.execute("SELECT COUNT(*) FROM games WHERE completed_at IS NOT NULL").fetchone()[0]
@@ -152,6 +173,9 @@ def main():
 
     sub.add_parser("users", help="List all users with game counts")
     sub.add_parser("stats", help="Show database summary stats")
+
+    p = sub.add_parser("clean", help="Delete abandoned games (timed out, no completion)")
+    p.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
 
     p = sub.add_parser("games", help="List games for a user")
     p.add_argument("user_id")
@@ -182,6 +206,7 @@ def main():
         "game": cmd_game,
         "delete-game": cmd_delete_game,
         "rename-user": cmd_rename_user,
+        "clean": cmd_clean,
         "leaderboard": cmd_leaderboard,
         "stats": cmd_stats,
     }
