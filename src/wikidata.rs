@@ -57,8 +57,8 @@ async fn lookup_person(name: &str) -> Option<(Person, Vec<String>)> {
             .and_then(|claim| claim["mainsnak"]["datavalue"]["value"]["id"].as_str());
 
         let gender = match gender_id {
-            Some("Q6581072") => "female",
-            Some("Q6581097") => "male",
+            Some("Q6581072") | Some("Q1052281") => "female",
+            Some("Q6581097") | Some("Q2449503") => "male",
             _ => "other",
         };
 

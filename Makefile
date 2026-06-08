@@ -31,4 +31,4 @@ release: check
 
 ## Build dev and run server
 serve: dev
-	cargo run
+	cargo run --bin name-a-woman

@@ -72,6 +72,13 @@ body {
   color: #fff;
 }
 
+.setup-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+}
+
 /* Transition for elements appearing between title and input */
 
 .timers,

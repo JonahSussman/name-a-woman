@@ -55,7 +55,10 @@
           maxlength="200"
         >
       </div>
-      <button class="start-btn" @click="loadLeaderboard">Leaderboard</button>
+      <div class="setup-links">
+        <button class="start-btn" @click="loadLeaderboard">Leaderboard</button>
+        <button class="start-btn" onclick="document.getElementById('help-modal').showModal()">How to Play</button>
+      </div>
     </div>
 
     <!-- Playing -->
@@ -327,6 +330,22 @@
     <a href="#" onclick="document.getElementById('privacy-modal').showModal(); return false;">Privacy</a>
   </div>
 </footer>
+
+<dialog id="help-modal" class="privacy-modal" onclick="if(event.target===this)this.close()">
+  <div class="privacy-content">
+    <h2>How to Play</h2>
+    <p>Name publicly-known people as fast as you can. Each guess must be someone with a Wikipedia or Wikidata page.</p>
+    <ul>
+      <li><strong>Use full names.</strong> "Marie Curie" will work. Just "Marie" won't.</li>
+      <li><strong>Be specific.</strong> "Catherine Zeta-Jones", not just "Catherine".</li>
+      <li><strong>Real, notable people only.</strong> Not "my mom", not fictional characters.</li>
+      <li><strong>Spelling is flexible.</strong> Close matches are accepted and marked with <strong>*</strong>.</li>
+      <li><strong>Obscure picks work too.</strong> If someone isn't in the database, they'll be looked up on Wikidata (marked with <strong>&dagger;</strong>), but lookups are limited.</li>
+    </ul>
+    <p>You have 5 minutes of inactivity before the game times out. The clock pauses while a guess is being checked.</p>
+    <button onclick="this.closest('dialog').close()">Got it</button>
+  </div>
+</dialog>
 
 <dialog id="privacy-modal" class="privacy-modal" onclick="if(event.target===this)this.close()">
   <div class="privacy-content">
